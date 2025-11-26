@@ -27,9 +27,8 @@ wheels/
 playwright/.local-browsers/
 
 # Data
-data/output/*.csv
-data/output/*.xlsx
-data/output/*.json
+data/
+!data/.gitkeep
 
 # IDE
 .vscode/
