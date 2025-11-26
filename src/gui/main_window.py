@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.services.crawl_service import CrawlService
 from src.filters.job_filter import JobFilter, FilterResult
+from src.gui.styles import MODERN_STYLE
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,8 @@ class MainWindow(QMainWindow):
         right_panel = self.create_right_panel()
         self.main_splitter.addWidget(right_panel)
 
-        # 初期の幅比率を設定（左:右 = 1:2）
-        self.main_splitter.setSizes([400, 800])
+        # 初期の幅比率を設定（左:右 = 500:700）- 左パネルを広げる
+        self.main_splitter.setSizes([500, 700])
 
         main_layout.addWidget(self.main_splitter)
 
@@ -180,21 +181,8 @@ class MainWindow(QMainWindow):
 
         # 実行ボタン
         self.search_btn = QPushButton("検索実行")
-        self.search_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1f77b4;
-                color: white;
-                padding: 10px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1a5a8a;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-        """)
+        self.search_btn.setProperty("class", "primary")
+        self.search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.search_btn.clicked.connect(self.start_crawl)
         layout.addWidget(self.search_btn)
 
@@ -245,22 +233,17 @@ class MainWindow(QMainWindow):
 
         # 地方ボタンを2行に配置
         region_grid = QGridLayout()
-        region_grid.setSpacing(3)
+        region_grid.setSpacing(10) # Spacing increased from 3
         self.region_buttons: Dict[str, QPushButton] = {}
 
         for i, (region_name, prefs) in enumerate(self.region_definitions):
             btn = QPushButton(region_name)
             btn.setCheckable(True)  # トグルボタンにする
-            btn.setStyleSheet("""
-                QPushButton {
-                    padding: 3px 8px;
-                    font-size: 11px;
-                }
-                QPushButton:checked {
-                    background-color: #4CAF50;
-                    color: white;
-                }
-            """)
+            btn.setCheckable(True)  # トグルボタンにする
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            # Inline style removed to use global QSS
+            # Specific size adjustment if needed
+            btn.setStyleSheet("font-size: 12px; padding: 4px 8px;")
             btn.clicked.connect(lambda checked, p=prefs, b=btn: self.toggle_areas_by_region(p, b))
             self.region_buttons[region_name] = btn
             region_grid.addWidget(btn, i // 4, i % 4)
@@ -295,12 +278,12 @@ class MainWindow(QMainWindow):
         # スクロール可能なエリア
         self.area_scroll = QScrollArea()
         self.area_scroll.setWidgetResizable(True)
-        self.area_scroll.setMinimumHeight(60)
+        self.area_scroll.setMinimumHeight(150) # Increased from 60
 
         area_widget = QWidget()
         grid = QGridLayout(area_widget)
-        grid.setSpacing(3)
-        grid.setContentsMargins(5, 5, 5, 5)
+        grid.setSpacing(10) # Spacing increased from 3
+        grid.setContentsMargins(10, 10, 10, 10)
 
         for i, (area, default) in enumerate(all_prefectures):
             check = QCheckBox(area)
@@ -397,12 +380,12 @@ class MainWindow(QMainWindow):
         # スクロール可能なエリア
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(60)
+        scroll.setMinimumHeight(150) # Increased from 60
 
         keyword_widget = QWidget()
         grid = QGridLayout(keyword_widget)
-        grid.setSpacing(3)
-        grid.setContentsMargins(5, 5, 5, 5)
+        grid.setSpacing(10) # Spacing increased from 3
+        grid.setContentsMargins(10, 10, 10, 10)
 
         for i, (keyword, default) in enumerate(keywords):
             check = QCheckBox(keyword)
@@ -459,20 +442,25 @@ class MainWindow(QMainWindow):
         self.filter_toggle_btn = QPushButton("▶ フィルタ設定（クリックで展開）")
         self.filter_toggle_btn.setCheckable(True)
         self.filter_toggle_btn.setChecked(False)
+        self.filter_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.filter_toggle_btn.setStyleSheet("""
             QPushButton {
                 text-align: left;
-                padding: 8px;
-                background-color: #e0e0e0;
-                border: 1px solid #ccc;
-                border-radius: 3px;
+                padding: 10px;
+                background-color: #ffffff;
+                border: 1px solid #e1e4e8;
+                border-radius: 6px;
                 font-weight: bold;
+                color: #4b5563;
             }
             QPushButton:checked {
-                background-color: #d0d0d0;
+                background-color: #f3f4f6;
+                border-bottom-left-radius: 0;
+                border-bottom-right-radius: 0;
             }
             QPushButton:hover {
-                background-color: #d5d5d5;
+                background-color: #f9fafb;
+                border-color: #d1d5db;
             }
         """)
         self.filter_toggle_btn.clicked.connect(self.toggle_filter_accordion)
@@ -587,6 +575,9 @@ class MainWindow(QMainWindow):
         ])
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.setShowGrid(False)
+        self.results_table.verticalHeader().setVisible(False)
         layout.addWidget(self.results_table)
 
         btn_layout = QHBoxLayout()
@@ -597,21 +588,13 @@ class MainWindow(QMainWindow):
         btn_layout.addStretch()
 
         self.apply_filter_btn = QPushButton("フィルタ適用")
-        self.apply_filter_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-        """)
+        self.apply_filter_btn.setProperty("class", "success")
+        self.apply_filter_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_filter_btn.clicked.connect(self.apply_filter)
         btn_layout.addWidget(self.apply_filter_btn)
 
         self.export_btn = QPushButton("CSVエクスポート（全件）")
+        self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.export_btn.clicked.connect(self.export_csv)
         btn_layout.addWidget(self.export_btn)
 
@@ -644,6 +627,9 @@ class MainWindow(QMainWindow):
         ])
         self.filtered_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.filtered_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.filtered_table.setAlternatingRowColors(True)
+        self.filtered_table.setShowGrid(False)
+        self.filtered_table.verticalHeader().setVisible(False)
         layout.addWidget(self.filtered_table, 2)
 
         btn_layout = QHBoxLayout()
@@ -654,17 +640,8 @@ class MainWindow(QMainWindow):
         btn_layout.addStretch()
 
         self.export_filtered_btn = QPushButton("フィルタ済みCSVエクスポート")
-        self.export_filtered_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #007bff;
-                color: white;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0056b3;
-            }
-        """)
+        self.export_filtered_btn.setProperty("class", "primary")
+        self.export_filtered_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.export_filtered_btn.clicked.connect(self.export_filtered_csv)
         btn_layout.addWidget(self.export_filtered_btn)
 
@@ -1008,6 +985,7 @@ def main():
     """アプリケーションを起動"""
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
+    app.setStyleSheet(MODERN_STYLE)
 
     logging.basicConfig(level=logging.INFO)
 
