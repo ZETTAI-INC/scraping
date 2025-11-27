@@ -246,29 +246,33 @@ class PageUtils:
             "indicators": []
         }
 
-        # ブロック指標をチェック
-        block_indicators = [
-            ("Access Denied", "text"),
-            ("403", "text"),
-            ("404", "text"),
-            ("blocked", "text"),
-            ("Robot Check", "text"),
-            ("Checking your browser", "text"),
-        ]
+        try:
+            # ブロック指標をチェック
+            block_indicators = [
+                ("Access Denied", "text"),
+                ("403", "text"),
+                ("404", "text"),
+                ("blocked", "text"),
+                ("Robot Check", "text"),
+                ("Checking your browser", "text"),
+            ]
 
-        page_content = await page.content()
-        page_text = await page.inner_text("body")
+            page_text = await page.inner_text("body")
 
-        for indicator, check_type in block_indicators:
-            if indicator.lower() in page_text.lower():
+            for indicator, check_type in block_indicators:
+                if indicator.lower() in page_text.lower():
+                    result["is_blocked"] = True
+                    result["indicators"].append(indicator)
+                    logger.warning(f"Block indicator detected: {indicator}")
+
+            # CAPTCHAチェック
+            if await PageUtils.check_for_captcha(page):
                 result["is_blocked"] = True
-                result["indicators"].append(indicator)
-                logger.warning(f"Block indicator detected: {indicator}")
+                result["reason"] = "CAPTCHA"
+                result["indicators"].append("CAPTCHA")
 
-        # CAPTCHAチェック
-        if await PageUtils.check_for_captcha(page):
-            result["is_blocked"] = True
-            result["reason"] = "CAPTCHA"
-            result["indicators"].append("CAPTCHA")
+        except Exception as e:
+            # ページがナビゲーション中などでエラーが出た場合は無視
+            logger.debug(f"Error checking for block (likely page navigating): {e}")
 
         return result

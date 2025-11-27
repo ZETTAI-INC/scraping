@@ -80,8 +80,10 @@ class CrawlService:
             'started_at': datetime.now(),
             'finished_at': None,
             'total_count': 0,
+            'scraped_count': 0,  # 生の取得件数
             'saved_count': 0,
             'new_count': 0,
+            'jobs': [],  # 今回取得した求人（UI表示用）
             'error': None,
         }
 
@@ -101,16 +103,25 @@ class CrawlService:
             )
 
             result['total_count'] = len(jobs)
+            result['scraped_count'] = len(jobs)
             self._report_progress(f"取得完了: {len(jobs)}件", 1, 2)
 
             # データベースに保存
             saved_count = 0
             new_count = 0
+            saved_jobs = []
+            saved_job_ids = []
             for job in jobs:
                 try:
+                    job['crawled_at'] = datetime.now()
                     # 既存チェック
                     existing = self._check_existing(job)
                     job_id = self.job_repository.save_job(job, "townwork")
+
+                    saved_job_ids.append(job_id)
+                    # UI表示用に整形したレコードを保持（DBから再読込しなくて済むように）
+                    saved_jobs.append(self._prepare_job_record(job))
+
                     saved_count += 1
                     if not existing:
                         new_count += 1
@@ -119,6 +130,14 @@ class CrawlService:
 
             result['saved_count'] = saved_count
             result['new_count'] = new_count
+            if saved_job_ids:
+                try:
+                    result['jobs'] = self.job_repository.get_jobs_by_ids(saved_job_ids)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch saved jobs by id: {e}")
+                    result['jobs'] = saved_jobs
+            else:
+                result['jobs'] = saved_jobs
 
             self._report_progress(f"保存完了: {saved_count}件（新着: {new_count}件）", 2, 2)
 
@@ -134,12 +153,41 @@ class CrawlService:
 
     def _check_existing(self, job: Dict[str, Any]) -> bool:
         """既存の求人かチェック"""
-        jobs = self.job_repository.get_jobs(
-            source_name="townwork",
-            keyword=job.get('url', ''),
-            limit=1
-        )
-        return len(jobs) > 0
+        source_id = self.db_manager.get_source_id("townwork")
+        if not source_id:
+            return False
+
+        job_identifier = job.get('job_id') or job.get('job_number')
+        page_url = job.get('page_url') or job.get('url')
+
+        if not job_identifier and not page_url:
+            return False
+
+        with self.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM jobs
+                WHERE source_id = ?
+                  AND (job_id = ? OR page_url = ?)
+                LIMIT 1
+                """,
+                (source_id, job_identifier or page_url, page_url or job_identifier)
+            )
+            return cursor.fetchone() is not None
+
+    def _prepare_job_record(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        """テーブル表示用にキーを正規化"""
+        return {
+            "company_name": job.get("company_name") or job.get("company", ""),
+            "job_title": job.get("job_title") or job.get("title", ""),
+            "work_location": job.get("work_location") or job.get("location", ""),
+            "salary": job.get("salary", ""),
+            "employment_type": job.get("employment_type", ""),
+            "page_url": job.get("page_url") or job.get("url", ""),
+            "crawled_at": job.get("crawled_at"),
+        }
 
     def _save_crawl_log(self, result: Dict[str, Any]):
         """クロールログを保存"""

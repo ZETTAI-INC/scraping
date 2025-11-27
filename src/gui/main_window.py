@@ -38,7 +38,7 @@ class CrawlWorker(QThread):
     finished = pyqtSignal(dict)
     progress = pyqtSignal(str, int, int)  # message, current, total
     error = pyqtSignal(str)
-    time_update = pyqtSignal(float, int)  # elapsed_time, job_count (経過時間と取得件数)
+    time_update = pyqtSignal(float, int, int)  # elapsed_time, scraped_count, saved_count
 
     def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int):
         super().__init__()
@@ -69,7 +69,14 @@ class CrawlWorker(QThread):
             self.service.set_progress_callback(progress_callback)
 
             # 各組み合わせを順次実行して進捗を報告
-            all_results = {'total_count': 0, 'new_count': 0, 'saved_count': 0, 'error': None}
+            all_results = {
+                'scraped_count': 0,
+                'total_count': 0,
+                'new_count': 0,
+                'saved_count': 0,
+                'jobs': [],
+                'error': None,
+            }
 
             # 時間計測開始
             start_time = time.time()
@@ -88,8 +95,10 @@ class CrawlWorker(QThread):
                     )
 
                     all_results['total_count'] += result.get('total_count', 0)
+                    all_results['scraped_count'] += result.get('scraped_count', result.get('total_count', 0))
                     all_results['new_count'] += result.get('new_count', 0)
                     all_results['saved_count'] += result.get('saved_count', 0)
+                    all_results['jobs'].extend(result.get('jobs', []))
                     if result.get('error'):
                         all_results['error'] = result['error']
 
@@ -97,7 +106,11 @@ class CrawlWorker(QThread):
 
                     # 経過時間と取得件数を報告
                     elapsed = time.time() - start_time
-                    self.time_update.emit(elapsed, all_results['total_count'])
+                    self.time_update.emit(
+                        elapsed,
+                        all_results['scraped_count'],
+                        all_results['saved_count']
+                    )
 
             # 時間計測終了
             end_time = time.time()
@@ -124,6 +137,7 @@ class MainWindow(QMainWindow):
         self.current_jobs = []
         self.filter_result: Optional[FilterResult] = None
         self.crawl_worker: Optional[CrawlWorker] = None
+        self.latest_run_summary: Optional[dict] = None
 
         # フィルタチェックボックスの辞書
         self.filter_checks: Dict[str, QCheckBox] = {}
@@ -686,14 +700,42 @@ class MainWindow(QMainWindow):
         layout.addLayout(btn_layout)
         return tab
 
-    def load_stats(self):
+    def _format_elapsed_time(self, elapsed_time: float) -> str:
+        """経過時間を見やすい文字列にフォーマット"""
+        if elapsed_time < 60:
+            return f"{elapsed_time:.1f}秒"
+        elif elapsed_time < 3600:
+            minutes = int(elapsed_time // 60)
+            seconds = int(elapsed_time % 60)
+            return f"{minutes}分{seconds}秒"
+        else:
+            hours = int(elapsed_time // 3600)
+            minutes = int((elapsed_time % 3600) // 60)
+            seconds = int(elapsed_time % 60)
+            return f"{hours}時間{minutes}分{seconds}秒"
+
+    def load_stats(self, run_summary: Optional[dict] = None):
         """統計情報を読み込み"""
+        if run_summary is not None:
+            self.latest_run_summary = run_summary
+
         try:
             stats = self.service.get_stats()
-            text = f"""総求人数: {stats.get('total_jobs', 0):,} 件
-新着: {stats.get('new_jobs', 0):,} 件
-DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
-            self.stats_label.setText(text)
+            lines = []
+
+            if self.latest_run_summary:
+                run = self.latest_run_summary
+                lines.append(
+                    f"今回: 取得 {run.get('scraped_count', 0):,} 件 / 保存 {run.get('saved_count', 0):,} 件 (新規 {run.get('new_count', 0):,} 件)"
+                )
+                elapsed = run.get('elapsed_time') or 0
+                lines.append(f"      所要時間: {self._format_elapsed_time(elapsed)}")
+
+            lines.append(f"DB累計: {stats.get('total_jobs', 0):,} 件")
+            lines.append(f"新着: {stats.get('new_jobs', 0):,} 件")
+            lines.append(f"DBサイズ: {stats.get('db_size_mb', 0):.1f} MB")
+
+            self.stats_label.setText("\n".join(lines))
         except Exception as e:
             self.stats_label.setText(f"エラー: {e}")
 
@@ -733,7 +775,7 @@ DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
         self.progress_bar.setRange(0, total_combinations)
         self.progress_bar.setValue(0)
         self.time_label.setVisible(True)
-        self.time_label.setText("経過時間: 0秒 | 取得件数: 0件")
+        self.time_label.setText("経過時間: 0秒 | 取得: 0件 | 保存: 0件")
         self.statusBar.showMessage(f"クローリング中... ({len(keywords)}キーワード x {len(areas)}地域)")
 
         self.crawl_worker = CrawlWorker(self.service, keywords, areas, max_pages)
@@ -749,33 +791,23 @@ DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
         self.progress_bar.setValue(current)
         self.statusBar.showMessage(message)
 
-    def on_time_update(self, elapsed_time: float, job_count: int):
+    def on_time_update(self, elapsed_time: float, scraped_count: int, saved_count: int):
         """時間計測更新"""
-        # 経過時間を見やすくフォーマット
-        if elapsed_time < 60:
-            time_str = f"{elapsed_time:.1f}秒"
-        elif elapsed_time < 3600:
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-            time_str = f"{minutes}分{seconds}秒"
-        else:
-            hours = int(elapsed_time // 3600)
-            minutes = int((elapsed_time % 3600) // 60)
-            seconds = int(elapsed_time % 60)
-            time_str = f"{hours}時間{minutes}分{seconds}秒"
+        time_str = self._format_elapsed_time(elapsed_time)
+        count_for_avg = saved_count if saved_count > 0 else scraped_count
 
         # 一件当たりの平均取得時間を計算
-        if job_count > 0:
-            avg_time = elapsed_time / job_count
+        if count_for_avg > 0:
+            avg_time = elapsed_time / count_for_avg
             if avg_time < 1:
                 avg_str = f"{avg_time * 1000:.0f}ms"
             else:
                 avg_str = f"{avg_time:.2f}秒"
             self.time_label.setText(
-                f"経過時間: {time_str} | 取得: {job_count}件 | 平均: {avg_str}/件"
+                f"経過時間: {time_str} | 取得: {scraped_count}件 | 保存: {saved_count}件 | 平均: {avg_str}/件"
             )
         else:
-            self.time_label.setText(f"経過時間: {time_str} | 取得: 0件")
+            self.time_label.setText(f"経過時間: {time_str} | 取得: 0件 | 保存: 0件")
 
     def on_crawl_finished(self, result: dict):
         """クローリング完了"""
@@ -785,33 +817,25 @@ DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
 
         # 最終的な時間情報を表示
         elapsed_time = result.get('elapsed_time', 0)
-        total_count = result.get('total_count', 0)
+        scraped_count = result.get('scraped_count', result.get('total_count', 0))
+        saved_count = result.get('saved_count', scraped_count)
+        new_count = result.get('new_count', 0)
 
-        # 経過時間を見やすくフォーマット
-        if elapsed_time < 60:
-            time_str = f"{elapsed_time:.1f}秒"
-        elif elapsed_time < 3600:
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-            time_str = f"{minutes}分{seconds}秒"
-        else:
-            hours = int(elapsed_time // 3600)
-            minutes = int((elapsed_time % 3600) // 60)
-            seconds = int(elapsed_time % 60)
-            time_str = f"{hours}時間{minutes}分{seconds}秒"
+        time_str = self._format_elapsed_time(elapsed_time)
+        count_for_avg = saved_count if saved_count > 0 else scraped_count
 
         # 一件当たりの平均取得時間を計算
-        if total_count > 0:
-            avg_time = elapsed_time / total_count
+        if count_for_avg > 0:
+            avg_time = elapsed_time / count_for_avg
             if avg_time < 1:
                 avg_str = f"{avg_time * 1000:.0f}ms"
             else:
                 avg_str = f"{avg_time:.2f}秒"
             self.time_label.setText(
-                f"完了 | 総時間: {time_str} | 取得: {total_count}件 | 平均: {avg_str}/件"
+                f"完了 | 総時間: {time_str} | 取得: {scraped_count}件 | 保存: {saved_count}件 (新規: {new_count}件) | 平均: {avg_str}/件"
             )
         else:
-            self.time_label.setText(f"完了 | 総時間: {time_str} | 取得: 0件")
+            self.time_label.setText(f"完了 | 総時間: {time_str} | 取得: 0件 | 保存: 0件")
 
         # 完了時のスタイルを変更（緑系）
         self.time_label.setStyleSheet("""
@@ -826,12 +850,17 @@ DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
             }
         """)
 
-        jobs = self.service.job_repository.get_jobs(source_name="townwork", limit=1000)
+        jobs = result.get('jobs') or self.service.job_repository.get_jobs(source_name="townwork", limit=1000)
         self.current_jobs = jobs
         self.update_results_table(jobs)
-        self.load_stats()
+        self.load_stats({
+            'scraped_count': scraped_count,
+            'saved_count': saved_count,
+            'new_count': new_count,
+            'elapsed_time': elapsed_time,
+        })
 
-        msg = f"完了: {total_count}件取得, 所要時間: {time_str}"
+        msg = f"完了: 保存 {saved_count}件 (取得 {scraped_count}件), 所要時間: {time_str}"
         self.statusBar.showMessage(msg)
 
         if result.get('error'):
@@ -851,12 +880,19 @@ DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
         self.results_table.setRowCount(len(jobs))
 
         for row, job in enumerate(jobs):
-            self.results_table.setItem(row, 0, QTableWidgetItem(job.get('company_name', '')))
-            self.results_table.setItem(row, 1, QTableWidgetItem(job.get('job_title', '')))
-            self.results_table.setItem(row, 2, QTableWidgetItem(job.get('work_location', '')))
-            self.results_table.setItem(row, 3, QTableWidgetItem(job.get('salary', '')))
-            self.results_table.setItem(row, 4, QTableWidgetItem(job.get('employment_type', '')))
-            self.results_table.setItem(row, 5, QTableWidgetItem(job.get('page_url', '')[:50]))
+            company = job.get('company_name') or job.get('company', '')
+            title = job.get('job_title') or job.get('title', '')
+            location = job.get('work_location') or job.get('location', '')
+            salary = job.get('salary', '')
+            employment_type = job.get('employment_type', '')
+            page_url = job.get('page_url') or job.get('url', '')
+
+            self.results_table.setItem(row, 0, QTableWidgetItem(company))
+            self.results_table.setItem(row, 1, QTableWidgetItem(title))
+            self.results_table.setItem(row, 2, QTableWidgetItem(location))
+            self.results_table.setItem(row, 3, QTableWidgetItem(salary))
+            self.results_table.setItem(row, 4, QTableWidgetItem(employment_type))
+            self.results_table.setItem(row, 5, QTableWidgetItem(page_url[:50]))
 
             crawled_at = job.get('crawled_at', '')
             if crawled_at and hasattr(crawled_at, 'strftime'):
@@ -870,12 +906,19 @@ DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
         self.filtered_table.setRowCount(len(jobs))
 
         for row, job in enumerate(jobs):
-            self.filtered_table.setItem(row, 0, QTableWidgetItem(job.get('company_name', '')))
-            self.filtered_table.setItem(row, 1, QTableWidgetItem(job.get('job_title', '')))
-            self.filtered_table.setItem(row, 2, QTableWidgetItem(job.get('work_location', '')))
-            self.filtered_table.setItem(row, 3, QTableWidgetItem(job.get('salary', '')))
-            self.filtered_table.setItem(row, 4, QTableWidgetItem(job.get('employment_type', '')))
-            self.filtered_table.setItem(row, 5, QTableWidgetItem(job.get('page_url', '')[:50]))
+            company = job.get('company_name') or job.get('company', '')
+            title = job.get('job_title') or job.get('title', '')
+            location = job.get('work_location') or job.get('location', '')
+            salary = job.get('salary', '')
+            employment_type = job.get('employment_type', '')
+            page_url = job.get('page_url') or job.get('url', '')
+
+            self.filtered_table.setItem(row, 0, QTableWidgetItem(company))
+            self.filtered_table.setItem(row, 1, QTableWidgetItem(title))
+            self.filtered_table.setItem(row, 2, QTableWidgetItem(location))
+            self.filtered_table.setItem(row, 3, QTableWidgetItem(salary))
+            self.filtered_table.setItem(row, 4, QTableWidgetItem(employment_type))
+            self.filtered_table.setItem(row, 5, QTableWidgetItem(page_url[:50]))
 
             crawled_at = job.get('crawled_at', '')
             if crawled_at and hasattr(crawled_at, 'strftime'):

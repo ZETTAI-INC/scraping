@@ -221,6 +221,25 @@ class JobRepository:
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_jobs_by_ids(self, ids: List[int]) -> List[Dict[str, Any]]:
+        """ID指定で求人情報を取得"""
+        if not ids:
+            return []
+
+        placeholders = ",".join(["?"] * len(ids))
+        query = f"""
+            SELECT j.*, s.display_name as source_display_name
+            FROM jobs j
+            JOIN sources s ON j.source_id = s.id
+            WHERE j.id IN ({placeholders})
+            ORDER BY j.crawled_at DESC
+        """
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, ids)
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_job_count(
         self,
         source_name: Optional[str] = None,
