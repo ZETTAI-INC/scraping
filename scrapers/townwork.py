@@ -78,6 +78,75 @@ class TownworkScraper(BaseScraper):
 
         return job_data
 
+    async def _get_search_result_cards(self, page: Page, card_selector: str) -> list:
+        """
+        検索結果のカードのみを取得（おすすめ求人セクションを除外）
+
+        タウンワークのページ構造:
+        - おすすめ求人: [class*='recommend'], [class*='Recommend'], [class*='pickup'] などのセクション内
+        - 検索結果: [class*='searchResult'], [class*='JobList'], メインコンテンツ領域
+
+        除外ロジック:
+        1. おすすめ求人セクション内のカードを特定
+        2. 検索結果セクション内のカードのみを返す
+        """
+        # 全ての求人カードを取得
+        all_cards = await page.query_selector_all(card_selector)
+
+        if len(all_cards) == 0:
+            return []
+
+        # 検索結果のカードのみをフィルタリング
+        search_result_cards = []
+
+        # おすすめ求人セクションを特定するセレクタのパターン
+        recommend_section_patterns = [
+            "[class*='recommend']",
+            "[class*='Recommend']",
+            "[class*='pickup']",
+            "[class*='Pickup']",
+            "[class*='banner']",
+            "[class*='Banner']",
+            "[class*='pr_']",
+            "[class*='PR_']",
+            "[class*='sponsored']",
+            "[class*='Sponsored']",
+        ]
+
+        for card in all_cards:
+            is_recommend = False
+
+            # カードがおすすめセクション内にあるかチェック
+            for pattern in recommend_section_patterns:
+                # 親要素のクラスをチェック（祖先を5階層まで遡る）
+                ancestor_check = await card.evaluate(f"""
+                    (el) => {{
+                        let current = el;
+                        for (let i = 0; i < 5; i++) {{
+                            if (!current.parentElement) break;
+                            current = current.parentElement;
+                            const className = current.className || '';
+                            const pattern = '{pattern.replace("[class*='", "").replace("']", "")}';
+                            if (className.toLowerCase().includes(pattern.toLowerCase())) {{
+                                return true;
+                            }}
+                        }}
+                        return false;
+                    }}
+                """)
+
+                if ancestor_check:
+                    is_recommend = True
+                    break
+
+            # おすすめセクション内でなければ検索結果として追加
+            if not is_recommend:
+                search_result_cards.append(card)
+
+        logger.info(f"フィルタリング結果: 全{len(all_cards)}件中、検索結果{len(search_result_cards)}件を抽出（おすすめ{len(all_cards) - len(search_result_cards)}件除外）")
+
+        return search_result_cards
+
     def generate_search_url(self, keyword: str, area: str, page: int = 1) -> str:
         """
         タウンワーク用の検索URL生成
@@ -152,13 +221,13 @@ class TownworkScraper(BaseScraper):
                         if attempt == 0:
                             continue  # もう一度このページをやり直す
 
-                    # 求人カードを取得
-                    job_cards = await page.query_selector_all(card_selector)
+                    # 求人カードを取得（おすすめ求人セクションを除外）
+                    job_cards = await self._get_search_result_cards(page, card_selector)
 
                     # 0件の場合は短い待機のあと再取得（描画遅延対策）
                     if len(job_cards) == 0:
                         await page.wait_for_timeout(1000)
-                        job_cards = await page.query_selector_all(card_selector)
+                        job_cards = await self._get_search_result_cards(page, card_selector)
 
                     # それでも0件なら別のリトライ機会があればやり直す
                     if len(job_cards) == 0:
