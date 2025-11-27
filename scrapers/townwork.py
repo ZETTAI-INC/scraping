@@ -150,28 +150,41 @@ class TownworkScraper(BaseScraper):
     def generate_search_url(self, keyword: str, area: str, page: int = 1) -> str:
         """
         タウンワーク用の検索URL生成
-        新しいURL形式: https://townwork.net/prefectures/{area}/job_search/?keyword={keyword}&page={page}
+
+        職種カテゴリが存在する場合:
+          https://townwork.net/prefectures/{area}/job_search/{category_path}?sc=new&page={page}
+        キーワード検索の場合:
+          https://townwork.net/prefectures/{area}/job_search/?keyword={keyword}&page={page}&sort=1
         """
         # エリア名をローマ字に変換
         area_codes = self.site_config.get("area_codes", {})
         area_code = area_codes.get(area, area.lower())
 
-        url_pattern = self.site_config.get("search_url_pattern")
-        base_url = url_pattern.format(area=area_code, keyword=keyword, page=page)
+        # 職種カテゴリが存在するかチェック
+        job_categories = self.site_config.get("job_categories", {})
+        category_path = job_categories.get(keyword)
 
-        # 新着順パラメータを付与（デフォルト: sort=1）
-        sort_conf = self.site_config.get("sort", {})
-        sort_param = sort_conf.get("param")
-        sort_newest = sort_conf.get("newest")
+        if category_path:
+            # 職種カテゴリ形式のURL
+            url_pattern = self.site_config.get("search_url_pattern")
+            base_url = url_pattern.format(area=area_code, category_path=category_path, page=page)
+            logger.info(f"Using category URL: {base_url}")
+        else:
+            # キーワード検索形式のURL（フォールバック）
+            url_pattern = self.site_config.get("search_url_pattern_keyword")
+            if not url_pattern:
+                # 後方互換性のため
+                url_pattern = "https://townwork.net/prefectures/{area}/job_search/?keyword={keyword}&page={page}"
+            base_url = url_pattern.format(area=area_code, keyword=keyword, page=page)
 
-        if sort_param and sort_newest is not None:
+            # キーワード検索の場合は新着順パラメータを付与
             from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
-
             parsed = urlparse(base_url)
             query = dict(parse_qsl(parsed.query))
-            query[sort_param] = sort_newest
+            query["sort"] = "1"
             new_query = urlencode(query)
             base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+            logger.info(f"Using keyword URL: {base_url}")
 
         return base_url
 
