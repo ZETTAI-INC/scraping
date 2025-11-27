@@ -99,7 +99,7 @@ class StealthConfig:
         }
 
 
-async def create_stealth_context(browser, user_agent: str = None, proxy: Dict = None) -> BrowserContext:
+async def create_stealth_context(browser, user_agent: str = None, proxy: Dict = None, block_resources: bool = True) -> BrowserContext:
     """
     Stealth設定を適用したブラウザコンテキストを作成
 
@@ -107,6 +107,7 @@ async def create_stealth_context(browser, user_agent: str = None, proxy: Dict = 
         browser: Playwrightブラウザインスタンス
         user_agent: カスタムUser-Agent（オプション）
         proxy: プロキシ設定（オプション）
+        block_resources: 画像・動画等のリソースをブロックするか（デフォルト: True）
 
     Returns:
         設定済みのBrowserContext
@@ -123,6 +124,55 @@ async def create_stealth_context(browser, user_agent: str = None, proxy: Dict = 
 
     # 全ページにステルススクリプトを適用
     context.on("page", lambda page: StealthConfig.apply_stealth_scripts(page))
+
+    # 画像・動画・フォント等のリソースをブロック（軽量化）
+    if block_resources:
+        async def setup_route_blocking(page: Page):
+            """不要なリソースをブロックするルートを設定"""
+            blocked_types = {'image', 'media', 'font', 'stylesheet'}
+            blocked_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico',
+                                  '.mp4', '.webm', '.avi', '.mov', '.mp3', '.wav',
+                                  '.woff', '.woff2', '.ttf', '.otf', '.eot'}
+
+            async def block_resources_handler(route):
+                request = route.request
+                resource_type = request.resource_type
+                url = request.url.lower()
+
+                # リソースタイプでブロック
+                if resource_type in blocked_types:
+                    await route.abort()
+                    return
+
+                # 拡張子でブロック
+                for ext in blocked_extensions:
+                    if url.endswith(ext) or f'{ext}?' in url:
+                        await route.abort()
+                        return
+
+                # 広告・トラッキングURLをブロック
+                blocked_domains = ['google-analytics.com', 'googletagmanager.com',
+                                   'doubleclick.net', 'facebook.net', 'twitter.com/i/']
+                for domain in blocked_domains:
+                    if domain in url:
+                        await route.abort()
+                        return
+
+                await route.continue_()
+
+            await page.route('**/*', block_resources_handler)
+
+        # 新しいページが作成されたときにルートを設定
+        async def on_page_created(page: Page):
+            await setup_route_blocking(page)
+
+        context.on("page", lambda page: page.context.browser.contexts)  # ダミー（非同期対応のため）
+
+        # コンテキストにフラグを設定（後でページ作成時に使用）
+        context._block_resources = True
+        context._setup_route_blocking = setup_route_blocking
+
+        logger.info("Resource blocking enabled (images, media, fonts)")
 
     logger.info("Stealth context created")
     return context

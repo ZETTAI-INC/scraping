@@ -16,7 +16,7 @@ class PageUtils:
     @staticmethod
     async def wait_for_page_load(
         page: Page,
-        timeout: int = 30000,
+        timeout: int = 15000,
         wait_for_network_idle: bool = True
     ) -> bool:
         """
@@ -34,15 +34,15 @@ class PageUtils:
             # DOMContentLoadedを待つ
             await page.wait_for_load_state("domcontentloaded", timeout=timeout)
 
-            # ネットワークアイドルを待つ（オプション）
+            # ネットワークアイドルを短時間待つ（2秒で打ち切り）
             if wait_for_network_idle:
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=5000)
+                    await page.wait_for_load_state("networkidle", timeout=2000)
                 except PlaywrightTimeoutError:
-                    logger.warning("Network idle timeout - continuing anyway")
+                    pass  # タイムアウトは無視して続行
 
-            # 追加の待機（JavaScriptの実行を待つ）
-            await asyncio.sleep(1)
+            # 追加の待機（0.5秒）
+            await asyncio.sleep(0.5)
 
             logger.debug("Page fully loaded")
             return True
@@ -92,7 +92,7 @@ class PageUtils:
     async def verify_selector(
         page: Page,
         selector: str,
-        timeout: int = 5000
+        timeout: int = 3000
     ) -> bool:
         """
         セレクタが存在するか検証
@@ -100,13 +100,14 @@ class PageUtils:
         Args:
             page: Playwrightページ
             selector: CSSセレクタ
-            timeout: タイムアウト（ミリ秒）
+            timeout: タイムアウト（ミリ秒）- 短縮済み
 
         Returns:
             セレクタが見つかったかどうか
         """
         try:
-            await page.wait_for_selector(selector, timeout=timeout, state="visible")
+            # state="attached"に変更（visibleより高速）
+            await page.wait_for_selector(selector, timeout=timeout, state="attached")
             logger.debug(f"Selector found: {selector}")
             return True
         except PlaywrightTimeoutError:
@@ -207,23 +208,27 @@ class PageUtils:
     @staticmethod
     async def check_for_captcha(page: Page) -> bool:
         """
-        CAPTCHAが表示されているかチェック
+        CAPTCHAが表示されているかチェック（高速版）
 
         Returns:
             CAPTCHAが検出された場合True
         """
+        # 並列でチェック（高速化）
         captcha_indicators = [
             "iframe[src*='recaptcha']",
-            "iframe[src*='hcaptcha']",
             ".g-recaptcha",
             "#captcha",
-            "[class*='captcha']",
         ]
 
-        for indicator in captcha_indicators:
-            if await PageUtils.verify_selector(page, indicator, timeout=1000):
-                logger.warning(f"CAPTCHA detected: {indicator}")
-                return True
+        try:
+            # 一度にまとめてチェック
+            for indicator in captcha_indicators:
+                element = await page.query_selector(indicator)
+                if element:
+                    logger.warning(f"CAPTCHA detected: {indicator}")
+                    return True
+        except Exception:
+            pass
 
         return False
 

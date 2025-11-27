@@ -163,8 +163,8 @@ class BaseScraper(ABC):
                 self.error_counter.record_failure(ValueError("No job_cards selector"))
                 return jobs
 
-            # セレクタが存在するか確認
-            if not await PageUtils.verify_selector(page, job_cards_selector, timeout=10000):
+            # セレクタが存在するか確認（タイムアウト短縮）
+            if not await PageUtils.verify_selector(page, job_cards_selector, timeout=5000):
                 logger.warning(f"Job cards selector not found: {job_cards_selector}")
                 # デバッグ用スクリーンショット
                 screenshot_path = f"data/screenshots/no_selector_{self.site_name}_{asyncio.get_event_loop().time()}.png"
@@ -236,6 +236,10 @@ class BaseScraper(ABC):
             # Stealthスクリプト適用
             await StealthConfig.apply_stealth_scripts(page)
 
+            # リソースブロッキングを適用（画像・動画・フォント等を無効化）
+            if hasattr(context, '_block_resources') and context._block_resources:
+                await context._setup_route_blocking(page)
+
             for page_num in range(1, max_pages + 1):
                 url = self.generate_search_url(keyword, area, page_num)
                 jobs = await self.scrape_page(page, url)
@@ -248,9 +252,8 @@ class BaseScraper(ABC):
                     logger.info(f"No more jobs found at page {page_num}")
                     break
 
-                # 次のページへ行く前に待機（検出回避 + 人間らしい動作）
-                wait_time = 1.5 + (asyncio.get_event_loop().time() % 1.0)  # 1.5-2.5秒
-                logger.debug(f"Waiting {wait_time:.1f}s before next page...")
+                # 次のページへ行く前に待機（短縮版）
+                wait_time = 0.5 + (asyncio.get_event_loop().time() % 0.5)  # 0.5-1.0秒
                 await asyncio.sleep(wait_time)
 
         except Exception as e:

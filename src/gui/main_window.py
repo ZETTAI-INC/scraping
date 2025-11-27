@@ -7,6 +7,7 @@ import asyncio
 import subprocess
 import platform
 from datetime import datetime
+import time
 from pathlib import Path
 from typing import Optional, List, Dict
 import logging
@@ -35,8 +36,9 @@ logger = logging.getLogger(__name__)
 class CrawlWorker(QThread):
     """クローリングワーカースレッド"""
     finished = pyqtSignal(dict)
-    progress = pyqtSignal(str, int, int)
+    progress = pyqtSignal(str, int, int)  # message, current, total
     error = pyqtSignal(str)
+    time_update = pyqtSignal(float, int)  # elapsed_time, job_count (経過時間と取得件数)
 
     def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int):
         super().__init__()
@@ -50,16 +52,64 @@ class CrawlWorker(QThread):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            result = loop.run_until_complete(
-                self.service.crawl_townwork(
-                    keywords=self.keywords,
-                    areas=self.areas,
-                    max_pages=self.max_pages
-                )
-            )
+            # 進捗コールバックを設定
+            total_combinations = len(self.keywords) * len(self.areas)
+            current_idx = [0]  # リストにして参照渡し
+
+            def progress_callback(message: str, current: int, total: int):
+                # キーワードと地域を計算
+                if current_idx[0] < total_combinations:
+                    kw_idx = current_idx[0] // len(self.areas)
+                    area_idx = current_idx[0] % len(self.areas)
+                    kw = self.keywords[kw_idx] if kw_idx < len(self.keywords) else ""
+                    area = self.areas[area_idx] if area_idx < len(self.areas) else ""
+                    detail_msg = f"[{area}] {kw} を検索中..."
+                    self.progress.emit(detail_msg, current_idx[0] + 1, total_combinations)
+
+            self.service.set_progress_callback(progress_callback)
+
+            # 各組み合わせを順次実行して進捗を報告
+            all_results = {'total_count': 0, 'new_count': 0, 'saved_count': 0, 'error': None}
+
+            # 時間計測開始
+            start_time = time.time()
+
+            for kw in self.keywords:
+                for area in self.areas:
+                    # 進捗を報告
+                    self.progress.emit(f"[{area}] {kw} を検索中...", current_idx[0] + 1, total_combinations)
+
+                    result = loop.run_until_complete(
+                        self.service.crawl_townwork(
+                            keywords=[kw],
+                            areas=[area],
+                            max_pages=self.max_pages
+                        )
+                    )
+
+                    all_results['total_count'] += result.get('total_count', 0)
+                    all_results['new_count'] += result.get('new_count', 0)
+                    all_results['saved_count'] += result.get('saved_count', 0)
+                    if result.get('error'):
+                        all_results['error'] = result['error']
+
+                    current_idx[0] += 1
+
+                    # 経過時間と取得件数を報告
+                    elapsed = time.time() - start_time
+                    self.time_update.emit(elapsed, all_results['total_count'])
+
+            # 時間計測終了
+            end_time = time.time()
+            total_elapsed = end_time - start_time
+
+            # 結果に時間情報を追加
+            all_results['elapsed_time'] = total_elapsed
+            all_results['start_time'] = start_time
+            all_results['end_time'] = end_time
 
             loop.close()
-            self.finished.emit(result)
+            self.finished.emit(all_results)
 
         except Exception as e:
             self.error.emit(str(e))
@@ -123,20 +173,15 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage("準備完了")
 
     def create_left_panel(self) -> QWidget:
-        """左パネル（検索条件 + フィルタ設定）を作成"""
-        # スクロールエリアで包む
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(350)
-
-        # パネルウィジェット
+        """左パネル（タブ形式：地域選択 / キーワード / フィルタ・オプション）を作成"""
+        # メインパネル
         panel = QWidget()
+        panel.setMinimumWidth(350)
         layout = QVBoxLayout(panel)
         layout.setSpacing(5)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # 媒体選択
+        # 媒体選択（タブの上に配置）
         source_group = QGroupBox("対象媒体")
         source_layout = QVBoxLayout(source_group)
         self.townwork_check = QCheckBox("タウンワーク")
@@ -145,51 +190,80 @@ class MainWindow(QMainWindow):
         source_layout.addWidget(self.townwork_check)
         layout.addWidget(source_group)
 
-        # 地域選択とキーワード選択をスプリッターで配置（高さ可変）
-        selection_splitter = QSplitter(Qt.Orientation.Vertical)
-        selection_splitter.setChildrenCollapsible(False)
+        # タブウィジェット（3つのタブ）
+        self.left_tabs = QTabWidget()
+        self.left_tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #e1e4e8;
+                border-radius: 4px;
+                background-color: #ffffff;
+            }
+            QTabBar::tab {
+                padding: 8px 16px;
+                margin-right: 2px;
+                background-color: #f3f4f6;
+                border: 1px solid #e1e4e8;
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background-color: #ffffff;
+                font-weight: bold;
+            }
+            QTabBar::tab:hover {
+                background-color: #e5e7eb;
+            }
+        """)
 
-        # 地域選択
-        area_group = self.create_area_selection_group()
-        selection_splitter.addWidget(area_group)
+        # タブ1: 地域選択
+        area_tab = self.create_area_tab()
+        self.left_tabs.addTab(area_tab, "地域選択")
 
-        # キーワード選択
-        keyword_group = self.create_keyword_selection_group()
-        selection_splitter.addWidget(keyword_group)
+        # タブ2: キーワード選択 + 追加キーワード
+        keyword_tab = self.create_keyword_tab()
+        self.left_tabs.addTab(keyword_tab, "キーワード")
 
-        # 初期サイズを設定（地域:キーワード = 1:1）
-        selection_splitter.setSizes([250, 250])
+        # タブ3: フィルタ設定 + 検索オプション
+        filter_tab = self.create_filter_tab_left()
+        self.left_tabs.addTab(filter_tab, "フィルタ・オプション")
 
-        layout.addWidget(selection_splitter, 1)
+        layout.addWidget(self.left_tabs, 1)
 
-        # フィルタ設定（アコーディオン - 折りたたみ可能）
-        filter_accordion = self.create_filter_accordion()
-        layout.addWidget(filter_accordion)
-
-        # 検索オプション
-        option_group = QGroupBox("検索オプション")
-        option_layout = QHBoxLayout(option_group)
-
-        option_layout.addWidget(QLabel("最大ページ数:"))
-        self.max_pages_spin = QSpinBox()
-        self.max_pages_spin.setRange(1, 20)
-        self.max_pages_spin.setValue(5)
-        option_layout.addWidget(self.max_pages_spin)
-        option_layout.addStretch()
-
-        layout.addWidget(option_group)
-
-        # 実行ボタン
+        # 実行ボタン（タブの下に配置）
         self.search_btn = QPushButton("検索実行")
         self.search_btn.setProperty("class", "primary")
         self.search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_btn.setMinimumHeight(40)
         self.search_btn.clicked.connect(self.start_crawl)
         layout.addWidget(self.search_btn)
+
+        # 進捗表示ラベル（クローリング中の詳細）
+        self.progress_label = QLabel("")
+        self.progress_label.setStyleSheet("color: #1f77b4; font-weight: bold;")
+        self.progress_label.setVisible(False)
+        layout.addWidget(self.progress_label)
 
         # 進捗バー
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
+
+        # 時間計測表示ラベル
+        self.time_label = QLabel("")
+        self.time_label.setStyleSheet("""
+            QLabel {
+                color: #2e7d32;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 5px;
+                background-color: #e8f5e9;
+                border: 1px solid #c8e6c9;
+                border-radius: 4px;
+            }
+        """)
+        self.time_label.setVisible(False)
+        layout.addWidget(self.time_label)
 
         # 統計情報
         stats_group = QGroupBox("統計情報")
@@ -198,28 +272,33 @@ class MainWindow(QMainWindow):
         stats_layout.addWidget(self.stats_label)
         layout.addWidget(stats_group)
 
-        scroll.setWidget(panel)
-        return scroll
+        return panel
 
-    def create_area_selection_group(self) -> QGroupBox:
-        """地域選択グループを作成"""
-        group = QGroupBox("地域選択（複数選択可）")
-        group.setMinimumHeight(200)
-        layout = QVBoxLayout(group)
-        layout.setContentsMargins(5, 10, 5, 5)
-        layout.setSpacing(5)
+    def create_area_tab(self) -> QWidget:
+        """地域選択タブを作成"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
 
         # 全選択/全解除ボタン
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(20)
         select_all_btn = QPushButton("全選択")
+        select_all_btn.setMinimumHeight(40)
         select_all_btn.clicked.connect(self.select_all_areas)
         deselect_all_btn = QPushButton("全解除")
+        deselect_all_btn.setMinimumHeight(40)
         deselect_all_btn.clicked.connect(self.deselect_all_areas)
         btn_layout.addWidget(select_all_btn)
         btn_layout.addWidget(deselect_all_btn)
         layout.addLayout(btn_layout)
 
-        # 地方別選択ボタン（トグル式：押すたびに選択/解除を切り替え）
+        # 地方別選択ボタン
         self.region_definitions = [
             ("北海道", ["北海道"]),
             ("東北", ["青森", "岩手", "宮城", "秋田", "山形", "福島"]),
@@ -231,70 +310,204 @@ class MainWindow(QMainWindow):
             ("九州", ["福岡", "佐賀", "長崎", "熊本", "大分", "宮崎", "鹿児島", "沖縄"]),
         ]
 
-        # 地方ボタンを2行に配置
-        region_grid = QGridLayout()
-        region_grid.setSpacing(10) # Spacing increased from 3
+        # 地方ボタングループ
+        region_group = QGroupBox("地方で選択")
+        region_layout = QGridLayout(region_group)
+        region_layout.setHorizontalSpacing(10)
+        region_layout.setVerticalSpacing(10)
         self.region_buttons: Dict[str, QPushButton] = {}
 
         for i, (region_name, prefs) in enumerate(self.region_definitions):
             btn = QPushButton(region_name)
-            btn.setCheckable(True)  # トグルボタンにする
-            btn.setCheckable(True)  # トグルボタンにする
+            btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            # Inline style removed to use global QSS
-            # Specific size adjustment if needed
-            btn.setStyleSheet("font-size: 12px; padding: 4px 8px;")
+            btn.setMinimumHeight(36)
             btn.clicked.connect(lambda checked, p=prefs, b=btn: self.toggle_areas_by_region(p, b))
             self.region_buttons[region_name] = btn
-            region_grid.addWidget(btn, i // 4, i % 4)
+            region_layout.addWidget(btn, i // 4, i % 4)
 
-        layout.addLayout(region_grid)
+        layout.addWidget(region_group)
 
-        # 47都道府県一覧
+        # 都道府県チェックボックス
+        pref_group = QGroupBox("都道府県")
+        pref_layout = QGridLayout(pref_group)
+        pref_layout.setHorizontalSpacing(10)
+        pref_layout.setVerticalSpacing(8)
+
         all_prefectures = [
-            # 北海道・東北
             ("北海道", False), ("青森", False), ("岩手", False), ("宮城", False),
             ("秋田", False), ("山形", False), ("福島", False),
-            # 関東
             ("茨城", False), ("栃木", False), ("群馬", False), ("埼玉", False),
             ("千葉", False), ("東京", True), ("神奈川", False),
-            # 中部
             ("新潟", False), ("富山", False), ("石川", False), ("福井", False),
             ("山梨", False), ("長野", False), ("岐阜", False), ("静岡", False),
             ("愛知", False),
-            # 近畿
             ("三重", False), ("滋賀", False), ("京都", False), ("大阪", False),
             ("兵庫", False), ("奈良", False), ("和歌山", False),
-            # 中国
             ("鳥取", False), ("島根", False), ("岡山", False), ("広島", False),
             ("山口", False),
-            # 四国
             ("徳島", False), ("香川", False), ("愛媛", False), ("高知", False),
-            # 九州・沖縄
             ("福岡", False), ("佐賀", False), ("長崎", False), ("熊本", False),
             ("大分", False), ("宮崎", False), ("鹿児島", False), ("沖縄", False),
         ]
-
-        # スクロール可能なエリア
-        self.area_scroll = QScrollArea()
-        self.area_scroll.setWidgetResizable(True)
-        self.area_scroll.setMinimumHeight(150) # Increased from 60
-
-        area_widget = QWidget()
-        grid = QGridLayout(area_widget)
-        grid.setSpacing(10) # Spacing increased from 3
-        grid.setContentsMargins(10, 10, 10, 10)
 
         for i, (area, default) in enumerate(all_prefectures):
             check = QCheckBox(area)
             check.setChecked(default)
             self.area_checks[area] = check
-            grid.addWidget(check, i // 4, i % 4)  # 4列で表示
+            pref_layout.addWidget(check, i // 4, i % 4)
 
-        self.area_scroll.setWidget(area_widget)
-        layout.addWidget(self.area_scroll, 1)  # stretch factor 1
+        layout.addWidget(pref_group)
+        layout.addStretch()
 
-        return group
+        scroll.setWidget(widget)
+        return scroll
+
+    def create_keyword_tab(self) -> QWidget:
+        """キーワード選択タブを作成"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        # 全選択/全解除ボタン
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(20)
+        select_all_btn = QPushButton("全選択")
+        select_all_btn.setMinimumHeight(40)
+        select_all_btn.clicked.connect(self.select_all_keywords)
+        deselect_all_btn = QPushButton("全解除")
+        deselect_all_btn.setMinimumHeight(40)
+        deselect_all_btn.clicked.connect(self.deselect_all_keywords)
+        btn_layout.addWidget(select_all_btn)
+        btn_layout.addWidget(deselect_all_btn)
+        layout.addLayout(btn_layout)
+
+        # キーワードチェックボックス
+        keyword_group = QGroupBox("キーワード一覧")
+        keyword_layout = QGridLayout(keyword_group)
+        keyword_layout.setHorizontalSpacing(10)
+        keyword_layout.setVerticalSpacing(8)
+
+        keywords = [
+            ("IT", True), ("エンジニア", False), ("プログラマー", False),
+            ("SE", False), ("Web", False), ("システム", False),
+            ("事務", False), ("経理", False), ("総務", False),
+            ("人事", False), ("秘書", False), ("受付", False),
+            ("営業", False), ("販売", False), ("接客", False),
+            ("店長", False), ("マネージャー", False),
+            ("製造", False), ("工場", False), ("物流", False),
+            ("倉庫", False), ("ドライバー", False), ("配送", False),
+            ("看護", False), ("介護", False), ("医療", False),
+            ("保育", False), ("薬剤師", False),
+            ("飲食", False), ("調理", False), ("ホール", False),
+            ("清掃", False), ("警備", False),
+            ("デザイン", False), ("企画", False), ("マーケティング", False),
+            ("コールセンター", False), ("データ入力", False), ("軽作業", False),
+        ]
+
+        for i, (keyword, default) in enumerate(keywords):
+            check = QCheckBox(keyword)
+            check.setChecked(default)
+            self.keyword_checks[keyword] = check
+            keyword_layout.addWidget(check, i // 3, i % 3)
+
+        layout.addWidget(keyword_group)
+
+        # 追加キーワード入力
+        custom_group = QGroupBox("追加キーワード")
+        custom_layout = QVBoxLayout(custom_group)
+        self.custom_keyword_input = QLineEdit()
+        self.custom_keyword_input.setPlaceholderText("カンマ区切りで入力（例: コンサル, マネジメント）")
+        self.custom_keyword_input.setMinimumHeight(36)
+        custom_layout.addWidget(self.custom_keyword_input)
+        layout.addWidget(custom_group)
+
+        layout.addStretch()
+
+        scroll.setWidget(widget)
+        return scroll
+
+    def create_filter_tab_left(self) -> QWidget:
+        """フィルタ・オプションタブを作成"""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        # 検索オプション
+        option_group = QGroupBox("検索オプション")
+        option_layout = QHBoxLayout(option_group)
+        option_layout.addWidget(QLabel("最大ページ数:"))
+        self.max_pages_spin = QSpinBox()
+        self.max_pages_spin.setRange(1, 20)
+        self.max_pages_spin.setValue(5)
+        option_layout.addWidget(self.max_pages_spin)
+        option_layout.addStretch()
+        layout.addWidget(option_group)
+
+        # フィルタ設定
+        filter_group = QGroupBox("フィルタ設定")
+        filter_layout = QVBoxLayout(filter_group)
+
+        # 全選択/全解除ボタン
+        btn_layout = QHBoxLayout()
+        select_all_btn = QPushButton("全選択")
+        select_all_btn.clicked.connect(self.select_all_filters)
+        deselect_all_btn = QPushButton("全解除")
+        deselect_all_btn.clicked.connect(self.deselect_all_filters)
+        btn_layout.addWidget(select_all_btn)
+        btn_layout.addWidget(deselect_all_btn)
+        filter_layout.addLayout(btn_layout)
+
+        # フィルタ項目
+        filters_info = [
+            ("duplicate_phone", "電話番号重複削除", "同一電話番号の求人を1件に集約"),
+            ("large_company", "大企業除外（1001人以上）", "従業員数1,001人以上の企業を除外"),
+            ("dispatch_keyword", "派遣・紹介キーワード除外", "人材派遣、人材紹介等を含む企業を除外"),
+            ("industry", "業界フィルタ", "広告、メディア、出版業界を除外"),
+            ("location_okinawa", "沖縄県除外", "勤務地が沖縄県の求人を除外"),
+            ("phone_prefix", "電話番号プレフィックス除外", "0120, 050, 沖縄局番等を除外"),
+        ]
+
+        for key, label, tooltip in filters_info:
+            check = QCheckBox(label)
+            check.setChecked(True)
+            check.setToolTip(tooltip)
+            self.filter_checks[key] = check
+            filter_layout.addWidget(check)
+
+        # 追加の除外キーワード入力
+        filter_layout.addWidget(QLabel("追加除外キーワード:"))
+        self.extra_keywords_input = QLineEdit()
+        self.extra_keywords_input.setPlaceholderText("カンマ区切りで入力")
+        self.extra_keywords_input.setToolTip("会社名・事業内容に含まれる場合に除外")
+        filter_layout.addWidget(self.extra_keywords_input)
+
+        # 従業員数しきい値
+        emp_layout = QHBoxLayout()
+        emp_layout.addWidget(QLabel("従業員数上限:"))
+        self.employee_threshold_spin = QSpinBox()
+        self.employee_threshold_spin.setRange(100, 10000)
+        self.employee_threshold_spin.setValue(1001)
+        self.employee_threshold_spin.setSingleStep(100)
+        emp_layout.addWidget(self.employee_threshold_spin)
+        emp_layout.addWidget(QLabel("人以上を除外"))
+        filter_layout.addLayout(emp_layout)
+
+        layout.addWidget(filter_group)
+        layout.addStretch()
+
+        scroll.setWidget(widget)
+        return scroll
 
     def toggle_areas_by_region(self, area_list: List[str], button: QPushButton):
         """地方ボタンの状態に応じて地域を選択/解除"""
@@ -334,81 +547,6 @@ class MainWindow(QMainWindow):
         """選択された地域を取得"""
         return [area for area, check in self.area_checks.items() if check.isChecked()]
 
-    def create_keyword_selection_group(self) -> QGroupBox:
-        """キーワード選択グループを作成"""
-        group = QGroupBox("キーワード選択（複数選択可）")
-        group.setMinimumHeight(180)
-        layout = QVBoxLayout(group)
-        layout.setContentsMargins(5, 10, 5, 5)
-        layout.setSpacing(5)
-
-        # 全選択/全解除ボタン
-        btn_layout = QHBoxLayout()
-        select_all_btn = QPushButton("全選択")
-        select_all_btn.clicked.connect(self.select_all_keywords)
-        deselect_all_btn = QPushButton("全解除")
-        deselect_all_btn.clicked.connect(self.deselect_all_keywords)
-        btn_layout.addWidget(select_all_btn)
-        btn_layout.addWidget(deselect_all_btn)
-        layout.addLayout(btn_layout)
-
-        # キーワード一覧（全量）
-        keywords = [
-            # IT関連
-            ("IT", True), ("エンジニア", False), ("プログラマー", False),
-            ("SE", False), ("Web", False), ("システム", False),
-            # 事務系
-            ("事務", False), ("経理", False), ("総務", False),
-            ("人事", False), ("秘書", False), ("受付", False),
-            # 営業系
-            ("営業", False), ("販売", False), ("接客", False),
-            ("店長", False), ("マネージャー", False),
-            # 製造・物流
-            ("製造", False), ("工場", False), ("物流", False),
-            ("倉庫", False), ("ドライバー", False), ("配送", False),
-            # 医療・介護
-            ("看護", False), ("介護", False), ("医療", False),
-            ("保育", False), ("薬剤師", False),
-            # 飲食・サービス
-            ("飲食", False), ("調理", False), ("ホール", False),
-            ("清掃", False), ("警備", False),
-            # その他
-            ("デザイン", False), ("企画", False), ("マーケティング", False),
-            ("コールセンター", False), ("データ入力", False), ("軽作業", False),
-        ]
-
-        # スクロール可能なエリア
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(150) # Increased from 60
-
-        keyword_widget = QWidget()
-        grid = QGridLayout(keyword_widget)
-        grid.setSpacing(10) # Spacing increased from 3
-        grid.setContentsMargins(10, 10, 10, 10)
-
-        for i, (keyword, default) in enumerate(keywords):
-            check = QCheckBox(keyword)
-            check.setChecked(default)
-            self.keyword_checks[keyword] = check
-            grid.addWidget(check, i // 3, i % 3)
-
-        scroll.setWidget(keyword_widget)
-        layout.addWidget(scroll, 1)  # stretch factor 1
-
-        # カスタムキーワード入力（固定高さ部分）
-        custom_widget = QWidget()
-        custom_layout = QVBoxLayout(custom_widget)
-        custom_layout.setContentsMargins(0, 5, 0, 0)
-        custom_layout.setSpacing(3)
-        custom_layout.addWidget(QLabel("追加キーワード（カンマ区切り）:"))
-        self.custom_keyword_input = QLineEdit()
-        self.custom_keyword_input.setPlaceholderText("例: コンサル, マネジメント")
-        custom_layout.addWidget(self.custom_keyword_input)
-        layout.addWidget(custom_widget)
-
-        return group
-
     def select_all_keywords(self):
         """全キーワードを選択"""
         for check in self.keyword_checks.values():
@@ -430,106 +568,6 @@ class MainWindow(QMainWindow):
             keywords.extend(custom_keywords)
 
         return keywords
-
-    def create_filter_accordion(self) -> QWidget:
-        """フィルタ設定のアコーディオン（折りたたみ可能）を作成"""
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(0)
-
-        # アコーディオンのヘッダーボタン
-        self.filter_toggle_btn = QPushButton("▶ フィルタ設定（クリックで展開）")
-        self.filter_toggle_btn.setCheckable(True)
-        self.filter_toggle_btn.setChecked(False)
-        self.filter_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.filter_toggle_btn.setStyleSheet("""
-            QPushButton {
-                text-align: left;
-                padding: 10px;
-                background-color: #ffffff;
-                border: 1px solid #e1e4e8;
-                border-radius: 6px;
-                font-weight: bold;
-                color: #4b5563;
-            }
-            QPushButton:checked {
-                background-color: #f3f4f6;
-                border-bottom-left-radius: 0;
-                border-bottom-right-radius: 0;
-            }
-            QPushButton:hover {
-                background-color: #f9fafb;
-                border-color: #d1d5db;
-            }
-        """)
-        self.filter_toggle_btn.clicked.connect(self.toggle_filter_accordion)
-        container_layout.addWidget(self.filter_toggle_btn)
-
-        # フィルタ設定の内容（折りたたみ可能）
-        self.filter_content = QWidget()
-        self.filter_content.setVisible(False)  # 初期状態は非表示
-        content_layout = QVBoxLayout(self.filter_content)
-        content_layout.setContentsMargins(5, 5, 5, 5)
-        content_layout.setSpacing(5)
-
-        # 全選択/全解除ボタン
-        btn_layout = QHBoxLayout()
-        select_all_btn = QPushButton("全選択")
-        select_all_btn.clicked.connect(self.select_all_filters)
-        deselect_all_btn = QPushButton("全解除")
-        deselect_all_btn.clicked.connect(self.deselect_all_filters)
-        btn_layout.addWidget(select_all_btn)
-        btn_layout.addWidget(deselect_all_btn)
-        content_layout.addLayout(btn_layout)
-
-        # フィルタ項目
-        filters_info = [
-            ("duplicate_phone", "電話番号重複削除", "同一電話番号の求人を1件に集約"),
-            ("large_company", "大企業除外（1001人以上）", "従業員数1,001人以上の企業を除外"),
-            ("dispatch_keyword", "派遣・紹介キーワード除外", "人材派遣、人材紹介等を含む企業を除外"),
-            ("industry", "業界フィルタ", "広告、メディア、出版業界を除外"),
-            ("location_okinawa", "沖縄県除外", "勤務地が沖縄県の求人を除外"),
-            ("phone_prefix", "電話番号プレフィックス除外", "0120, 050, 沖縄局番等を除外"),
-        ]
-
-        for key, label, tooltip in filters_info:
-            check = QCheckBox(label)
-            check.setChecked(True)  # デフォルトでON
-            check.setToolTip(tooltip)
-            self.filter_checks[key] = check
-            content_layout.addWidget(check)
-
-        # 追加の除外キーワード入力
-        content_layout.addWidget(QLabel("追加除外キーワード:"))
-        self.extra_keywords_input = QLineEdit()
-        self.extra_keywords_input.setPlaceholderText("カンマ区切りで入力")
-        self.extra_keywords_input.setToolTip("会社名・事業内容に含まれる場合に除外")
-        content_layout.addWidget(self.extra_keywords_input)
-
-        # 従業員数しきい値
-        emp_layout = QHBoxLayout()
-        emp_layout.addWidget(QLabel("従業員数上限:"))
-        self.employee_threshold_spin = QSpinBox()
-        self.employee_threshold_spin.setRange(100, 10000)
-        self.employee_threshold_spin.setValue(1001)
-        self.employee_threshold_spin.setSingleStep(100)
-        emp_layout.addWidget(self.employee_threshold_spin)
-        emp_layout.addWidget(QLabel("人以上を除外"))
-        content_layout.addLayout(emp_layout)
-
-        container_layout.addWidget(self.filter_content)
-
-        return container
-
-    def toggle_filter_accordion(self):
-        """フィルタアコーディオンの表示/非表示を切り替え"""
-        is_expanded = self.filter_toggle_btn.isChecked()
-        self.filter_content.setVisible(is_expanded)
-        if is_expanded:
-            self.filter_toggle_btn.setText("▼ フィルタ設定（クリックで折りたたむ）")
-        else:
-            self.filter_toggle_btn.setText("▶ フィルタ設定（クリックで展開）")
 
     def select_all_filters(self):
         """全フィルタを選択"""
@@ -689,26 +727,111 @@ DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
                 return
 
         self.search_btn.setEnabled(False)
+        self.progress_label.setVisible(True)
+        self.progress_label.setText("クローリング開始中...")
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setRange(0, total_combinations)
+        self.progress_bar.setValue(0)
+        self.time_label.setVisible(True)
+        self.time_label.setText("経過時間: 0秒 | 取得件数: 0件")
         self.statusBar.showMessage(f"クローリング中... ({len(keywords)}キーワード x {len(areas)}地域)")
 
         self.crawl_worker = CrawlWorker(self.service, keywords, areas, max_pages)
         self.crawl_worker.finished.connect(self.on_crawl_finished)
+        self.crawl_worker.progress.connect(self.on_crawl_progress)
         self.crawl_worker.error.connect(self.on_crawl_error)
+        self.crawl_worker.time_update.connect(self.on_time_update)
         self.crawl_worker.start()
+
+    def on_crawl_progress(self, message: str, current: int, total: int):
+        """クローリング進捗更新"""
+        self.progress_label.setText(f"{message} ({current}/{total})")
+        self.progress_bar.setValue(current)
+        self.statusBar.showMessage(message)
+
+    def on_time_update(self, elapsed_time: float, job_count: int):
+        """時間計測更新"""
+        # 経過時間を見やすくフォーマット
+        if elapsed_time < 60:
+            time_str = f"{elapsed_time:.1f}秒"
+        elif elapsed_time < 3600:
+            minutes = int(elapsed_time // 60)
+            seconds = int(elapsed_time % 60)
+            time_str = f"{minutes}分{seconds}秒"
+        else:
+            hours = int(elapsed_time // 3600)
+            minutes = int((elapsed_time % 3600) // 60)
+            seconds = int(elapsed_time % 60)
+            time_str = f"{hours}時間{minutes}分{seconds}秒"
+
+        # 一件当たりの平均取得時間を計算
+        if job_count > 0:
+            avg_time = elapsed_time / job_count
+            if avg_time < 1:
+                avg_str = f"{avg_time * 1000:.0f}ms"
+            else:
+                avg_str = f"{avg_time:.2f}秒"
+            self.time_label.setText(
+                f"経過時間: {time_str} | 取得: {job_count}件 | 平均: {avg_str}/件"
+            )
+        else:
+            self.time_label.setText(f"経過時間: {time_str} | 取得: 0件")
 
     def on_crawl_finished(self, result: dict):
         """クローリング完了"""
         self.search_btn.setEnabled(True)
+        self.progress_label.setVisible(False)
         self.progress_bar.setVisible(False)
+
+        # 最終的な時間情報を表示
+        elapsed_time = result.get('elapsed_time', 0)
+        total_count = result.get('total_count', 0)
+
+        # 経過時間を見やすくフォーマット
+        if elapsed_time < 60:
+            time_str = f"{elapsed_time:.1f}秒"
+        elif elapsed_time < 3600:
+            minutes = int(elapsed_time // 60)
+            seconds = int(elapsed_time % 60)
+            time_str = f"{minutes}分{seconds}秒"
+        else:
+            hours = int(elapsed_time // 3600)
+            minutes = int((elapsed_time % 3600) // 60)
+            seconds = int(elapsed_time % 60)
+            time_str = f"{hours}時間{minutes}分{seconds}秒"
+
+        # 一件当たりの平均取得時間を計算
+        if total_count > 0:
+            avg_time = elapsed_time / total_count
+            if avg_time < 1:
+                avg_str = f"{avg_time * 1000:.0f}ms"
+            else:
+                avg_str = f"{avg_time:.2f}秒"
+            self.time_label.setText(
+                f"完了 | 総時間: {time_str} | 取得: {total_count}件 | 平均: {avg_str}/件"
+            )
+        else:
+            self.time_label.setText(f"完了 | 総時間: {time_str} | 取得: 0件")
+
+        # 完了時のスタイルを変更（緑系）
+        self.time_label.setStyleSheet("""
+            QLabel {
+                color: #1b5e20;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 5px;
+                background-color: #c8e6c9;
+                border: 1px solid #a5d6a7;
+                border-radius: 4px;
+            }
+        """)
 
         jobs = self.service.job_repository.get_jobs(source_name="townwork", limit=1000)
         self.current_jobs = jobs
         self.update_results_table(jobs)
         self.load_stats()
 
-        msg = f"完了: {result.get('total_count', 0)}件取得, {result.get('new_count', 0)}件が新着"
+        msg = f"完了: {total_count}件取得, 所要時間: {time_str}"
         self.statusBar.showMessage(msg)
 
         if result.get('error'):
@@ -717,7 +840,9 @@ DBサイズ: {stats.get('db_size_mb', 0):.1f} MB"""
     def on_crawl_error(self, error_msg: str):
         """クローリングエラー"""
         self.search_btn.setEnabled(True)
+        self.progress_label.setVisible(False)
         self.progress_bar.setVisible(False)
+        self.time_label.setVisible(False)
         self.statusBar.showMessage(f"エラー: {error_msg}")
         QMessageBox.critical(self, "エラー", f"クローリングエラー: {error_msg}")
 
