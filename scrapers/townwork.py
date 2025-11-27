@@ -111,6 +111,14 @@ class TownworkScraper(BaseScraper):
             "[class*='PR_']",
             "[class*='sponsored']",
             "[class*='Sponsored']",
+            "[class*='ad_']",
+            "[class*='Ad_']",
+            "[class*='promotion']",
+            "[class*='Promotion']",
+            "[class*='feature']",
+            "[class*='Feature']",
+            "[class*='highlight']",
+            "[class*='Highlight']",
         ]
 
         for card in all_cards:
@@ -342,6 +350,11 @@ class TownworkScraper(BaseScraper):
             job_type_elem = await card.query_selector("[class*='jobType']")
             if job_type_elem:
                 data["employment_type"] = (await job_type_elem.inner_text()).strip()
+
+            # 勤務地が空の求人はおすすめ求人の可能性が高いため除外
+            if not data.get("location"):
+                logger.debug(f"Skipping job with empty location: {data.get('page_url', 'N/A')}")
+                return None
 
             return data if data.get("page_url") else None
 
