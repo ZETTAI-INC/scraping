@@ -32,16 +32,32 @@
 
 ## クイックスタート
 
-### 簡単起動（Windows）
+### 簡単起動（Windows）- 推奨
 
-1. **初回のみ**: `setup.bat` をダブルクリック → セットアップ完了まで待つ
-2. **以降**: `start.bat` をダブルクリックするだけ！
+**初回セットアップ手順:**
+
+1. `install.bat` をダブルクリック → パッケージインストール完了まで待つ
+2. `start.bat` をダブルクリック → アプリが起動！
+
+**2回目以降:**
+
+`start.bat` をダブルクリックするだけ！
+
+> **注意**: Pythonがインストールされていない場合は、`start.bat` が自動的にPython 3.11をダウンロード・インストールします。インストール後は一度ウィンドウを閉じて、再度 `start.bat` を実行してください。
+
+### バッチファイル一覧
+
+| ファイル | 用途 | 説明 |
+|----------|------|------|
+| `install.bat` | **初回必須** | 依存パッケージとPlaywrightブラウザをインストール |
+| `start.bat` | アプリ起動 | アプリケーションを起動（Pythonがなければ自動インストール） |
+| `setup.bat` | セットアップ | install.batと同様（Python確認 + パッケージインストール） |
 
 ### コマンドラインから起動
 
 ```bash
 # 1. 依存パッケージのインストール
-pip install -r requirements.txt
+pip install playwright pandas openpyxl PyQt6 APScheduler beautifulsoup4 lxml aiofiles python-dotenv pydantic
 
 # 2. Playwrightブラウザのインストール
 playwright install chromium
@@ -228,6 +244,14 @@ scraping/
 
 ## トラブルシューティング
 
+### バッチファイルをダブルクリックしても一瞬で消える
+
+**原因**: Pythonや依存パッケージが正しくインストールされていない可能性があります。
+
+**解決方法**:
+1. まず `install.bat` をダブルクリックして依存パッケージをインストール
+2. インストール完了後、`start.bat` をダブルクリック
+
 ### アプリが起動しない
 
 ```bash
@@ -237,6 +261,8 @@ pip show PyQt6
 # 再インストール
 pip install --upgrade PyQt6
 ```
+
+**または `install.bat` を再実行してください。**
 
 ### データが取得できない
 

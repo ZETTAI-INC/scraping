@@ -1,68 +1,104 @@
 @echo off
-chcp 65001 >nul
-title セットアップ - 求人情報収集システム
+chcp 932 >nul
+title Setup - Job Scraper
 
 echo ========================================
-echo   初回セットアップ
+echo   Initial Setup
 echo ========================================
 echo.
 
-REM Pythonが利用可能か確認
-python --version >nul 2>&1
+REM Check if real Python is installed (not Windows Store stub)
+python --version 2>nul | findstr /R "^Python" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [エラー] Pythonがインストールされていません。
+    echo Python is not installed. Installing Python 3.11...
     echo.
-    echo 以下のURLからPythonをダウンロードしてインストールしてください:
-    echo https://www.python.org/downloads/
+
+    REM Download Python 3.11 installer
+    echo Downloading Python 3.11 (about 25MB)...
+    echo Please wait...
     echo.
-    echo ※インストール時に「Add Python to PATH」にチェックを入れてください
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe' -OutFile '%TEMP%\python-installer.exe'"
+
+    if not exist "%TEMP%\python-installer.exe" (
+        echo [ERROR] Failed to download Python installer.
+        echo Please download manually from: https://www.python.org/downloads/
+        pause
+        exit /b 1
+    )
+
+    echo Download complete!
+    echo.
+    echo Installing Python 3.11 (this may take a few minutes)...
+    echo Please wait...
+    echo.
+
+    REM Install Python silently with PATH option
+    "%TEMP%\python-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 Include_launcher=1
+
+    if %errorlevel% neq 0 (
+        echo [ERROR] Python installation failed.
+        echo Please install manually from: https://www.python.org/downloads/
+        pause
+        exit /b 1
+    )
+
+    REM Clean up installer
+    del "%TEMP%\python-installer.exe" >nul 2>&1
+
+    echo.
+    echo ========================================
+    echo   Python 3.11 installed successfully!
+    echo ========================================
+    echo.
+    echo Please close this window and run setup.bat again.
+    echo (PATH needs to be refreshed)
     echo.
     pause
-    exit /b 1
+    exit /b 0
 )
 
-echo [OK] Python が見つかりました
+echo [OK] Python found
 python --version
 echo.
 
-REM pipのアップグレード
-echo pipをアップグレード中...
+REM Upgrade pip
+echo Upgrading pip...
 python -m pip install --upgrade pip
 echo.
 
-REM 依存パッケージのインストール
-echo 依存パッケージをインストール中...
+REM Install dependencies
+echo Installing dependencies...
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo.
-    echo [エラー] パッケージのインストールに失敗しました。
+    echo [ERROR] Failed to install packages.
     pause
     exit /b 1
 )
 echo.
 
-REM Playwrightブラウザのインストール
-echo Playwrightブラウザをインストール中...
+REM Install Playwright browser
+echo Installing Playwright browser...
 playwright install chromium
 if %errorlevel% neq 0 (
     echo.
-    echo [エラー] Playwrightのインストールに失敗しました。
+    echo [ERROR] Failed to install Playwright.
     pause
     exit /b 1
 )
 echo.
 
-REM dataフォルダの作成
+REM Create data folders
 if not exist "data\db" mkdir "data\db"
 if not exist "data\output" mkdir "data\output"
 if not exist "data\screenshots" mkdir "data\screenshots"
-echo [OK] データフォルダを作成しました
+echo [OK] Data folders created
 echo.
 
 echo ========================================
-echo   セットアップ完了！
+echo   Setup Complete!
 echo ========================================
 echo.
-echo 「start.bat」をダブルクリックしてアプリを起動できます。
+echo Double-click "start.bat" to run the application.
 echo.
 pause
