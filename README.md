@@ -21,7 +21,7 @@
 ### 2025-11-28 - 大型アップデート
 
 #### Indeed対応
-- **Indeed Japan (jp.indeed.com) スクレイピングに対応**
+- **Indeed Japan (jp.indeed.com) スクレイピングに対応**(調整中） 
 - タウンワークと同様に都道府県 × 職種での検索が可能
 - GUI上でタウンワーク/Indeedを選択して同時検索可能
 
