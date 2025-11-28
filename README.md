@@ -1,17 +1,16 @@
-# Job Scraping System / 求人サイト スクレイピングシステム
+# 求人情報自動収集システム - タウンワーク
 
 <div align="center">
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)
+![PyQt6](https://img.shields.io/badge/PyQt6-GUI-41CD52?logo=qt&logoColor=white)
 ![Playwright](https://img.shields.io/badge/Playwright-1.40%2B-green?logo=playwright&logoColor=white)
-![Streamlit](https://img.shields.io/badge/Streamlit-GUI-red?logo=streamlit&logoColor=white)
-![React](https://img.shields.io/badge/React-18.2-61DAFB?logo=react&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?logo=typescript&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-Database-003B57?logo=sqlite&logoColor=white)
 ![License](https://img.shields.io/badge/License-Educational-yellow)
 
-**複数の求人サイトから効率的にデータを収集するためのスクレイピングシステム**
+**タウンワークから効率的に求人データを収集するためのデスクトップアプリケーション**
 
-[クイックスタート](#-クイックスタート) • [機能](#-主な機能) • [GUI版](#-gui版) • [ドキュメント](#-ドキュメント)
+[クイックスタート](#クイックスタート) • [機能](#主な機能) • [使い方](#使い方)
 
 </div>
 
@@ -19,52 +18,32 @@
 
 ## 目次
 
-- [クイックスタート](#-クイックスタート)
-- [重要な注意事項](#️-重要な注意事項)
-- [主な機能](#-主な機能)
-- [セットアップ](#-セットアップ)
-- [使い方](#-2つの使い方)
-- [GUI版](#-gui版react--typescript)
-- [プロジェクト構造](#-プロジェクト構造)
-- [新しいサイトの追加](#-新しいサイトの追加方法)
-- [パフォーマンス](#-パフォーマンス)
-- [トラブルシューティング](#️-トラブルシューティング)
-- [今後の開発](#-今後の開発)
-- [ライセンス](#-ライセンス)
+- [クイックスタート](#クイックスタート)
+- [重要な注意事項](#重要な注意事項)
+- [主な機能](#主な機能)
+- [セットアップ](#セットアップ)
+- [使い方](#使い方)
+- [プロジェクト構造](#プロジェクト構造)
+- [トラブルシューティング](#トラブルシューティング)
+- [今後の開発](#今後の開発)
+- [ライセンス](#ライセンス)
 
 ---
 
 ## クイックスタート
 
-**3分で実行可能！**
-
 ```bash
-# 1. セットアップ検証
-bash run.sh
-# メニューで「0」を選択してセットアップを確認
+# 1. 依存パッケージのインストール
+pip install -r requirements.txt
 
-# 2. 動作テスト
-bash run.sh
-# メニューで「1」を選択して基本動作を確認
+# 2. Playwrightブラウザのインストール
+playwright install chromium
 
-# 3. 実際のスクレイピング
-bash run.sh
-# メニューで「2」を選択してIndeedからデータ取得
+# 3. アプリケーション起動
+python main.py
 ```
 
-> 詳しい手順は **[START_HERE.md](START_HERE.md)** をご覧ください。
-
-### GUI版クイックスタート
-
-モダンなWeb UIで操作したい方：
-
-```bash
-bash start-gui.sh
-# メニューで「1」を選択してセットアップ
-# その後「4」を選択してアプリ起動
-```
-
-> 詳細: **[GUI_README.md](GUI_README.md)**
+PyQt6ベースのデスクトップGUIが起動します。
 
 ---
 
@@ -83,32 +62,42 @@ bash start-gui.sh
 
 ## 主な機能
 
-### コア機能
+### 検索機能
 
 | 機能 | 説明 |
 |------|------|
-| **複数サイト対応** | タウンワーク、バイトル、Indeed、Yahoo!しごと検索など |
-| **並列処理** | 非同期処理による高速スクレイピング（最大50並列） |
-| **柔軟な検索** | キーワード×地域の組み合わせ検索 |
-| **データエクスポート** | CSV/Excel形式での出力 |
+| **地域選択** | 47都道府県から選択可能、地方単位での一括選択に対応 |
+| **キーワード検索** | IT、事務、営業など40種類以上のプリセットキーワード |
+| **カスタムキーワード** | 任意のキーワードを追加可能 |
+| **並列処理** | 非同期処理による高速スクレイピング（1〜12並列） |
 
-### GUI・管理機能
+### フィルタ機能
+
+| フィルタ | 説明 |
+|----------|------|
+| **電話番号重複削除** | 同一電話番号の求人を1件に集約 |
+| **大企業除外** | 従業員数1,001人以上の企業を除外（しきい値変更可能） |
+| **派遣・紹介除外** | 人材派遣、人材紹介等を含む企業を除外 |
+| **業界フィルタ** | 広告、メディア、出版業界を除外 |
+| **勤務地フィルタ** | 沖縄県の求人を除外 |
+| **電話番号プレフィックス** | 0120、050、沖縄局番等を除外 |
+
+### データ管理
 
 | 機能 | 説明 |
 |------|------|
-| **Streamlit GUI** | 直感的なWebインターフェース |
-| **React + TypeScript GUI** | モダンなSPA（シングルページアプリ） |
-| **セレクタ管理** | GUI上でセレクタの編集・管理が可能 |
-| **データプレビュー** | 取得データのリアルタイムプレビュー |
+| **SQLiteデータベース** | 取得した求人データを永続化 |
+| **重複検出** | URL・求人IDによる重複排除 |
+| **CSVエクスポート** | フィルタ前・後のデータをCSV出力 |
+| **統計表示** | DB累計件数、新着件数、DBサイズを表示 |
 
 ### 技術的特徴
 
+- **PyQt6 GUI** - ネイティブなデスクトップアプリケーション
+- **Playwright** - 高速で安定したブラウザ自動化
 - **Stealth設定** - ヘッドレスブラウザ検出回避
-- **実践的なページ待機** - 確実なデータ取得
-- **セレクタ検証** - 実行前に確認
-- **ブロック検出** - CAPTCHA/アクセス拒否の自動検出
-- **デバッグツール** - スクリーンショット自動保存
-- **詳細なロギング** - 問題の迅速な特定
+- **非同期処理** - UIをブロックせずにバックグラウンド実行
+- **リアルタイム進捗** - 経過時間、取得件数、保存件数をリアルタイム表示
 
 ---
 
@@ -117,273 +106,142 @@ bash start-gui.sh
 ### 必要要件
 
 - Python 3.9以上
-- Node.js 18以上（GUI版を使用する場合）
+- Windows / macOS / Linux
 
-### 最小限のセットアップ（シンプルスクレイパー用）
-
-```bash
-# 必須パッケージのインストール
-pip3 install playwright pandas openpyxl
-
-# Playwrightブラウザのインストール
-playwright install chromium
-
-# セットアップ検証
-python3 verify_setup.py
-```
-
-### フルセットアップ（GUI版を使う場合）
+### インストール
 
 ```bash
-# すべてのパッケージをインストール
-pip3 install -r requirements.txt
+# 1. 依存パッケージのインストール
+pip install -r requirements.txt
 
-# Playwrightブラウザのインストール
+# 2. Playwrightブラウザのインストール
 playwright install chromium
+
+# 3. セットアップ検証（オプション）
+python verify_setup.py
 ```
 
 ---
 
-## 2つの使い方
+## 使い方
 
-### 方法1: シンプルスクリプト（推奨・初心者向け）
-
-**特徴**:
-- 1ファイル完結、すぐに実行可能
-- 複雑な設定不要
-- エラーに強い実装
-- 実際のサイト（Indeed/Yahoo）で動作確認済み
-
-**実行方法**:
-```bash
-# メニューから実行
-bash run.sh
-
-# または直接実行
-python3 simple_scraper.py
-```
-
-**提供スクリプト**:
-
-| スクリプト | 用途 |
-|-----------|------|
-| `verify_setup.py` | セットアップ検証 |
-| `minimal_test.py` | 動作確認テスト |
-| `simple_scraper.py` | シンプルスクレイパー（Indeed/Yahoo） |
-| `convert_to_excel.py` | JSON→Excel変換 |
-| `run.sh` | 便利なメニューランチャー |
-
-### 方法2: Streamlit GUI版（高度な使い方）
-
-**特徴**:
-- Streamlit GUIで直感的に操作
-- セレクタ管理機能
-- データプレビュー機能
-- 並列処理による高速化
-
-**実行方法**:
-```bash
-streamlit run app.py
-```
-
-ブラウザが自動的に開き、GUIが表示されます（通常 http://localhost:8501）
-
----
-
-## GUI版（React + TypeScript）
-
-### 概要
-
-最新のWebテクノロジーを使用したモダンなGUIを提供：
-
-- **フロントエンド**: React 18.2 + TypeScript + Vite + Tailwind CSS
-- **バックエンド**: FastAPI + Python
-
-### GUI版の起動
+### アプリケーション起動
 
 ```bash
-# すべてを一括起動
-bash start-gui.sh
-# メニューで「4」を選択
-
-# または手動で起動
-# ターミナル1: バックエンド
-cd backend && python main.py
-
-# ターミナル2: フロントエンド
-cd frontend && npm run dev
+python main.py
 ```
 
-### 主な画面
+### 画面構成
 
-1. **ダッシュボード** - 統計情報とクイックアクション
-2. **スクレイピング実行** - 検索条件の設定と実行
-3. **サイト管理** - セレクタの編集と管理
-4. **データ確認** - 取得データの閲覧とエクスポート
+アプリケーションは左右2パネル構成です：
+
+**左パネル（設定）**
+- **地域選択タブ**: 都道府県を選択（地方単位での一括選択可能）
+- **キーワードタブ**: 検索キーワードを選択（カスタムキーワード追加可能）
+- **フィルタ・オプションタブ**: フィルタ設定と検索オプション
+
+**右パネル（結果）**
+- **検索結果タブ**: 取得した求人一覧
+- **フィルタ結果タブ**: フィルタ適用後の求人一覧
+
+### 基本的な操作手順
+
+1. **地域を選択**: 左パネルの「地域選択」タブで都道府県を選択
+2. **キーワードを選択**: 「キーワード」タブで検索キーワードを選択
+3. **検索実行**: 「検索実行」ボタンをクリック
+4. **フィルタ適用**: 検索結果タブで「フィルタ適用」ボタンをクリック
+5. **CSVエクスポート**: 必要に応じてCSV出力
+
+### 検索オプション
+
+| オプション | 説明 | デフォルト |
+|------------|------|------------|
+| 最大ページ数 | 各検索条件で取得するページ数 | 5 |
+| 並列数 | 同時に処理する数 | 5 |
 
 ---
 
 ## プロジェクト構造
 
 ```
-TOWNWORK/
-├── ドキュメント
-│   ├── README.md                # このファイル
-│   ├── START_HERE.md            # クイックスタートガイド
-│   ├── README_PRODUCTION.md     # 本番運用ガイド
-│   ├── GUI_README.md            # GUI版ガイド
-│   └── GETTING_STARTED.md       # 詳細ガイド
+scraping/
+├── main.py                      # エントリーポイント（GUIを起動）
+├── requirements.txt             # 依存パッケージ
 │
-├── シンプルスクリプト（すぐ実行可能）
-│   ├── verify_setup.py          # セットアップ検証
-│   ├── minimal_test.py          # 動作テスト
-│   ├── simple_scraper.py        # シンプルスクレイパー
-│   ├── convert_to_excel.py      # Excel変換
-│   └── run.sh                   # メニューランチャー
+├── src/                         # メインソースコード
+│   ├── gui/
+│   │   ├── main_window.py       # PyQt6メインウィンドウ
+│   │   └── styles.py            # UIスタイル定義
+│   │
+│   ├── services/
+│   │   ├── crawl_service.py     # クローリングサービス
+│   │   └── csv_exporter.py      # CSVエクスポート
+│   │
+│   ├── database/
+│   │   ├── db_manager.py        # データベース管理
+│   │   └── job_repository.py    # 求人データリポジトリ
+│   │
+│   ├── filters/
+│   │   └── job_filter.py        # フィルタ処理
+│   │
+│   └── models/
+│       ├── job.py               # 求人モデル
+│       └── search_condition.py  # 検索条件モデル
 │
-├── Streamlit版
-│   └── app.py                   # Streamlit GUIメインファイル
+├── scrapers/
+│   ├── townwork.py              # タウンワークスクレイパー
+│   └── base_scraper.py          # ベーススクレイパー
 │
-├── React GUI版
-│   ├── frontend/                # React + TypeScript フロントエンド
-│   │   ├── src/
-│   │   │   ├── components/      # UIコンポーネント
-│   │   │   ├── pages/           # ページコンポーネント
-│   │   │   └── services/        # APIサービス
-│   │   └── package.json
-│   └── backend/                 # FastAPI バックエンド
-│       └── main.py
+├── utils/
+│   ├── stealth.py               # ステルス設定
+│   ├── page_utils.py            # ページユーティリティ
+│   └── ...                      # その他ユーティリティ
 │
-├── コアモジュール
-│   ├── config/
-│   │   └── selectors.json       # サイトセレクタ設定
-│   ├── scrapers/
-│   │   ├── base_scraper.py      # ベーススクレイパー
-│   │   ├── townwork.py          # タウンワーク
-│   │   ├── baitoru.py           # バイトル
-│   │   ├── indeed.py            # Indeed
-│   │   └── ...                  # その他のサイト
-│   └── utils/
-│       ├── stealth.py           # ステルス設定
-│       ├── page_utils.py        # ページユーティリティ
-│       ├── retry.py             # リトライ処理
-│       ├── user_agents.py       # User-Agent管理
-│       ├── proxy.py             # プロキシ管理
-│       └── performance.py       # パフォーマンス測定
-│
-└── 出力
-    └── data/                    # スクレイピング結果
+└── data/
+    ├── db/                      # SQLiteデータベース
+    └── output/                  # CSVエクスポート先
 ```
-
----
-
-## 新しいサイトの追加方法
-
-### 1. セレクタマッピングの作成
-
-`config/selectors.json` に新しいサイトの設定を追加:
-
-```json
-{
-  "new_site": {
-    "name": "新サイト",
-    "base_url": "https://example.com",
-    "search_url_pattern": "https://example.com/search?q={keyword}&area={area}&page={page}",
-    "selectors": {
-      "job_cards": ".job-item",
-      "title": ".job-title",
-      "company": ".company-name",
-      "location": ".location",
-      "salary": ".salary"
-    }
-  }
-}
-```
-
-### 2. スクレイパークラスの作成
-
-`scrapers/new_site.py` を作成:
-
-```python
-from .base_scraper import BaseScraper
-
-class NewSiteScraper(BaseScraper):
-    def __init__(self):
-        super().__init__(site_name="new_site")
-
-    async def extract_detail_info(self, page, url):
-        # 詳細ページの情報取得ロジック
-        return {}
-```
-
-### 3. app.pyに登録
-
-```python
-from scrapers.new_site import NewSiteScraper
-
-# get_scraper関数に追加
-scrapers = {
-    "townwork": TownworkScraper,
-    "baitoru": BaitoruScraper,
-    "indeed": IndeedScraper,
-    "new_site": NewSiteScraper,  # 追加
-}
-```
-
----
-
-## パフォーマンス
-
-### 目標性能
-
-| 条件 | 取得件数 | 目標時間 |
-|------|---------|---------|
-| 1サイト × 1条件 × 5ページ | 50件 | 3秒 |
-| 1サイト × 10条件 × 5ページ | 500件 | 15秒 |
-| 3サイト × 10条件 × 5ページ | 1,500件 | 1分 |
-
-### 並列数の推奨設定
-
-| 用途 | 並列数 | 安定性 |
-|------|--------|--------|
-| 軽量テスト | 5 | 高 |
-| 通常使用 | 10-20 | 中 |
-| 最大速度 | 50 | 低（リスク高） |
 
 ---
 
 ## トラブルシューティング
 
-### セレクタが機能しない
+### アプリが起動しない
 
-1. サイトのHTML構造が変更された可能性があります
-2. 「サイト管理」でセレクタを更新してください
-3. Chrome DevToolsで正しいセレクタを確認できます
+```bash
+# PyQt6がインストールされているか確認
+pip show PyQt6
+
+# 再インストール
+pip install --upgrade PyQt6
+```
 
 ### データが取得できない
 
-1. ブラウザのヘッドレスモードを無効にしてテスト
-2. `scrapers/base_scraper.py` の `headless=False` に変更
-3. 実際のブラウザ動作を確認
+1. **ネットワーク接続を確認**
+2. **並列数を減らす**: フィルタ・オプションタブで並列数を1〜3に設定
+3. **ヘッドレスモード無効化**: `scrapers/townwork.py`の`headless=False`に変更してブラウザ動作を確認
 
-### アクセスが拒否される
+### Playwrightエラー
 
-- User-Agentの変更
-- リクエスト間隔の調整
-- 並列数を減らす
+```bash
+# ブラウザを再インストール
+playwright install chromium --with-deps
+```
 
-> 詳細なトラブルシューティングは **[README_PRODUCTION.md](README_PRODUCTION.md)** をご覧ください。
+### CSVが文字化けする
+
+- CSVはUTF-8で出力されます
+- Excelで開く場合は「データ」→「テキストから」でUTF-8を指定
 
 ---
 
 ## 今後の開発
 
+- [ ] 複数求人サイト対応（バイトル、Indeed等）
 - [ ] エラーリトライ機能の強化
-- [ ] プロキシローテーション対応
 - [ ] スケジューラー機能（定期実行）
-- [ ] セレクタ自動更新機能
-- [ ] より詳細なログ機能
-- [ ] 対応サイトの拡大
+- [ ] 詳細ログビューア
 
 ---
 
@@ -395,26 +253,12 @@ scrapers = {
 
 ---
 
-## コントリビューション
-
-プルリクエスト歓迎！
-
-1. このリポジトリをフォーク
-2. フィーチャーブランチを作成 (`git checkout -b feature/amazing-feature`)
-3. 変更をコミット (`git commit -m 'Add amazing feature'`)
-4. ブランチにプッシュ (`git push origin feature/amazing-feature`)
-5. プルリクエストを作成
-
----
-
 <div align="center">
 
-**開発者**: Claude Code + You
-
-**最終更新**: 2025-11-26
+**最終更新**: 2025-11-28
 
 ---
 
-Made with Playwright + React + FastAPI
+Made with PyQt6 + Playwright + SQLite
 
 </div>
