@@ -217,7 +217,7 @@ class BaseScraper(ABC):
         area: str,
         max_pages: int = 5
     ) -> List[Dict[str, Any]]:
-        """ブラウザを使って複数ページをスクレイピング（Stealth対応）"""
+        """ブラウザを使って複数ページをスクレイピング（Stealth対応）- 順次実行版"""
         all_jobs = []
 
         # User-Agentをローテーション
@@ -273,22 +273,76 @@ class BaseScraper(ABC):
 
         return all_jobs
 
+    async def scrape_single_page(
+        self,
+        browser: Browser,
+        keyword: str,
+        area: str,
+        page_num: int,
+        task_idx: int = 0
+    ) -> List[Dict[str, Any]]:
+        """1ページを並列用にスクレイピング"""
+        import random
+
+        # タスク開始前にスタッガード遅延（同時アクセスを避ける）
+        stagger_delay = task_idx * 1.5 + random.uniform(0.5, 1.5)
+        logger.info(f"[タスク{task_idx+1}] {stagger_delay:.1f}秒後に開始...")
+        await asyncio.sleep(stagger_delay)
+
+        # User-Agentをローテーション
+        user_agent = ua_rotator.get_random()
+
+        # プロキシ設定
+        proxy_config = None
+        if proxy_rotator.is_enabled():
+            proxy = proxy_rotator.get_random()
+            if proxy:
+                proxy_config = proxy.to_playwright_format()
+
+        # Stealthコンテキスト作成
+        context = await create_stealth_context(
+            browser,
+            user_agent=user_agent,
+            proxy=proxy_config
+        )
+
+        jobs = []
+        try:
+            page = await context.new_page()
+            await StealthConfig.apply_stealth_scripts(page)
+
+            if hasattr(context, '_block_resources') and context._block_resources:
+                await context._setup_route_blocking(page)
+
+            url = self.generate_search_url(keyword, area, page_num)
+            jobs = await self.scrape_page(page, url)
+
+            self.performance_monitor.record_item(len(jobs))
+
+        except Exception as e:
+            logger.error(f"Error scraping page {page_num}: {e}", exc_info=True)
+
+        finally:
+            await context.close()
+
+        return jobs
+
     async def scrape(
         self,
         keywords: List[str],
         areas: List[str],
         max_pages: int = 5,
-        parallel: int = 5,
+        parallel: int = 2,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
-        非同期並列スクレイピング
+        非同期並列スクレイピング（ページ単位で並列化）
 
         Args:
             keywords: 検索キーワードリスト
             areas: 地域リスト
             max_pages: 各条件での最大ページ数
-            parallel: 並列数
+            parallel: 並列数（同時に開くブラウザコンテキスト数、推奨: 2-3）
         """
         # パフォーマンス測定開始
         self.performance_monitor.start()
@@ -298,29 +352,43 @@ class BaseScraper(ABC):
         # 現在のフィルタを設定
         self.current_filters = filters or {}
 
+        # 並列数が高すぎる場合は警告して制限
+        if parallel > 2:
+            logger.warning(f"並列数 {parallel} は高すぎるため 2 に制限します（タイムアウト・403エラー回避）")
+            parallel = 2
+
         async with async_playwright() as p:
             # Stealth設定を適用してブラウザ起動
             browser = await p.chromium.launch(**StealthConfig.get_launch_args())
 
             try:
-                # 全ての組み合わせのタスクを生成
-                tasks = []
+                # 全てのページタスクを生成（キーワード×地域×ページ）
+                page_tasks = []
                 for keyword in keywords:
                     for area in areas:
-                        tasks.append(
-                            self.scrape_with_browser(browser, keyword, area, max_pages)
-                        )
+                        for page_num in range(1, max_pages + 1):
+                            page_tasks.append((keyword, area, page_num))
+
+                logger.info(f"[並列化] 合計 {len(page_tasks)} ページを parallel={parallel} で処理")
 
                 # セマフォで並列数を制限
                 semaphore = asyncio.Semaphore(parallel)
+                active_count = [0]  # 現在アクティブなタスク数（リストで参照渡し）
 
-                async def limited_task(task):
+                async def limited_task(keyword, area, page_num, idx):
                     async with semaphore:
-                        return await task
+                        active_count[0] += 1
+                        logger.info(f"[並列確認] タスク{idx+1}開始 (p{page_num}) - 現在同時実行数: {active_count[0]}/{parallel}")
+                        try:
+                            result = await self.scrape_single_page(browser, keyword, area, page_num, idx)
+                            return result
+                        finally:
+                            logger.info(f"[並列確認] タスク{idx+1}終了 (p{page_num}) - 同時実行数: {active_count[0]}/{parallel}")
+                            active_count[0] -= 1
 
                 # 並列実行
                 results = await asyncio.gather(
-                    *[limited_task(task) for task in tasks],
+                    *[limited_task(kw, ar, pn, i) for i, (kw, ar, pn) in enumerate(page_tasks)],
                     return_exceptions=True
                 )
 

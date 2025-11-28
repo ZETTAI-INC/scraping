@@ -2,10 +2,15 @@
 タウンワーク専用スクレイパー
 2024年更新版 - 新しいサイト構造に対応
 """
+import asyncio
+import random
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from playwright.async_api import Page, Browser, TimeoutError as PlaywrightTimeoutError
 from .base_scraper import BaseScraper
+from utils.user_agents import ua_rotator
+from utils.proxy import proxy_rotator
+from utils.stealth import StealthConfig, create_stealth_context
 import logging
 import re
 
@@ -480,5 +485,154 @@ class TownworkScraper(BaseScraper):
                     await page.wait_for_timeout(1000)  # サーバーに負荷をかけないよう待機
                 except Exception as e:
                     logger.error(f"Error fetching detail for job {i+1}: {e}")
+
+        return jobs
+
+    async def scrape_single_page(
+        self,
+        browser: Browser,
+        keyword: str,
+        area: str,
+        page_num: int,
+        task_idx: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        タウンワーク用: 1ページを並列用にスクレイピング
+        base_scraperのメソッドをオーバーライド
+        """
+        # タスク開始前にスタッガード遅延（同時アクセスを避ける）
+        stagger_delay = task_idx * 1.5 + random.uniform(0.5, 1.5)
+        logger.info(f"[タスク{task_idx+1}] {stagger_delay:.1f}秒後に開始...")
+        await asyncio.sleep(stagger_delay)
+
+        # User-Agentをローテーション
+        user_agent = ua_rotator.get_random()
+
+        # プロキシ設定
+        proxy_config = None
+        if proxy_rotator.is_enabled():
+            proxy = proxy_rotator.get_random()
+            if proxy:
+                proxy_config = proxy.to_playwright_format()
+
+        # Stealthコンテキスト作成
+        context = await create_stealth_context(
+            browser,
+            user_agent=user_agent,
+            proxy=proxy_config
+        )
+
+        jobs = []
+        try:
+            page = await context.new_page()
+            await StealthConfig.apply_stealth_scripts(page)
+
+            if hasattr(context, '_block_resources') and context._block_resources:
+                await context._setup_route_blocking(page)
+
+            # タウンワーク専用の1ページ取得処理
+            jobs = await self._scrape_single_page_impl(page, keyword, area, page_num)
+
+            self.performance_monitor.record_item(len(jobs))
+
+        except Exception as e:
+            logger.error(f"Error scraping page {page_num}: {e}", exc_info=True)
+
+        finally:
+            await context.close()
+
+        return jobs
+
+    async def _scrape_single_page_impl(
+        self,
+        page: Page,
+        keyword: str,
+        area: str,
+        page_num: int
+    ) -> List[Dict[str, Any]]:
+        """
+        タウンワーク: 1ページ分の求人を取得する実装
+        """
+        jobs = []
+        url = self.generate_search_url(keyword, area, page_num)
+        logger.info(f"Fetching page {page_num}: {url}")
+
+        # ページ取得・抽出をリトライ（最大2回）
+        for attempt in range(2):
+            try:
+                response = await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=60000
+                )
+                # DOMロード後に追加で待機（JSレンダリング用）
+                await page.wait_for_timeout(2000)
+
+                if response and response.status == 404:
+                    logger.warning(f"Page not found: {url}")
+                    return jobs
+
+                if response and response.status == 403:
+                    logger.error(f"Access blocked (403): {url}")
+                    return jobs
+
+                card_selector = self.selectors.get("job_cards", "[class*='jobCard']")
+
+                # カードが描画されるまで数回リトライ
+                selector_ready = False
+                for sel_attempt in range(4):
+                    try:
+                        await page.wait_for_selector(card_selector, timeout=2000 + 500 * sel_attempt)
+                        selector_ready = True
+                        break
+                    except PlaywrightTimeoutError:
+                        logger.warning(
+                            f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/4). Retrying after short wait."
+                        )
+                        await page.wait_for_timeout(600 + 200 * sel_attempt)
+
+                if not selector_ready:
+                    logger.warning(
+                        f"Job cards selector not ready on page {page_num}; attempt {attempt + 1}/2."
+                    )
+                    if attempt == 0:
+                        continue
+
+                # 求人カードを取得（おすすめ求人セクションを除外）
+                job_cards = await self._get_search_result_cards(page, card_selector)
+
+                # 0件の場合は短い待機のあと再取得
+                if len(job_cards) == 0:
+                    await page.wait_for_timeout(1000)
+                    job_cards = await self._get_search_result_cards(page, card_selector)
+
+                if len(job_cards) == 0:
+                    logger.warning(f"No job cards found on page {page_num} (attempt {attempt + 1}/2).")
+                    if attempt == 0:
+                        await page.wait_for_timeout(1200)
+                        continue
+                    else:
+                        return jobs
+
+                logger.info(f"Found {len(job_cards)} jobs on page {page_num}")
+
+                for card in job_cards:
+                    try:
+                        job_data = await self._extract_card_data(card)
+                        if job_data:
+                            jobs.append(job_data)
+                    except Exception as e:
+                        logger.error(f"Error extracting job card: {e}")
+                        continue
+
+                return jobs
+
+            except Exception as e:
+                logger.error(f"Error fetching page {page_num} (attempt {attempt + 1}/2): {e}")
+                if attempt == 0:
+                    await page.wait_for_timeout(1500)
+                    continue
+                else:
+                    return jobs
 
         return jobs
