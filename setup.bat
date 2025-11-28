@@ -8,67 +8,77 @@ echo ========================================
 echo.
 
 REM Check if real Python is installed (not Windows Store stub)
-python --version 2>nul | findstr /R "^Python" >nul 2>&1
-if %errorlevel% neq 0 (
-    echo Python is not installed. Installing Python 3.11...
-    echo.
+REM Windows Store stub returns errorlevel 9009
+python --version >nul 2>&1
+if %errorlevel% equ 9009 goto :install_python
+if %errorlevel% neq 0 goto :install_python
 
-    REM Download Python 3.11 installer
-    echo Downloading Python 3.11 (about 25MB)...
-    echo Please wait...
-    echo.
-    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe' -OutFile '%TEMP%\python-installer.exe'"
+REM Double check - if python exists but no pip, it's likely the stub
+pip --version >nul 2>&1
+if %errorlevel% neq 0 goto :install_python
 
-    if not exist "%TEMP%\python-installer.exe" (
-        echo [ERROR] Failed to download Python installer.
-        echo Please download manually from: https://www.python.org/downloads/
-        pause
-        exit /b 1
-    )
+goto :python_ok
 
-    echo Download complete!
-    echo.
-    echo Installing Python 3.11 (this may take a few minutes)...
-    echo Please wait...
-    echo.
+:install_python
+echo Python is not installed. Installing Python 3.11...
+echo.
 
-    REM Install Python silently with PATH option
-    "%TEMP%\python-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 Include_launcher=1
+REM Download Python 3.11 installer
+echo Downloading Python 3.11 (about 25MB)...
+echo Please wait...
+echo.
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe' -OutFile '%TEMP%\python-installer.exe'"
 
-    if %errorlevel% neq 0 (
-        echo [ERROR] Python installation failed.
-        echo Please install manually from: https://www.python.org/downloads/
-        pause
-        exit /b 1
-    )
-
-    REM Clean up installer
-    del "%TEMP%\python-installer.exe" >nul 2>&1
-
-    echo.
-    echo ========================================
-    echo   Python 3.11 installed successfully!
-    echo ========================================
-    echo.
-    echo Please close this window and run setup.bat again.
-    echo (PATH needs to be refreshed)
-    echo.
+if not exist "%TEMP%\python-installer.exe" (
+    echo [ERROR] Failed to download Python installer.
+    echo Please download manually from: https://www.python.org/downloads/
     pause
-    exit /b 0
+    exit /b 1
 )
 
+echo Download complete!
+echo.
+echo Installing Python 3.11 (this may take a few minutes)...
+echo Please wait...
+echo.
+
+REM Install Python silently with PATH option
+"%TEMP%\python-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 Include_launcher=1
+
+if %errorlevel% neq 0 (
+    echo [ERROR] Python installation failed.
+    echo Please install manually from: https://www.python.org/downloads/
+    pause
+    exit /b 1
+)
+
+REM Clean up installer
+del "%TEMP%\python-installer.exe" >nul 2>&1
+
+echo.
+echo ========================================
+echo   Python 3.11 installed successfully!
+echo ========================================
+echo.
+echo Please close this window and run setup.bat again.
+echo (PATH needs to be refreshed)
+echo.
+pause
+exit /b 0
+
+:python_ok
 echo [OK] Python found
 python --version
 echo.
 
 REM Upgrade pip
-echo Upgrading pip...
+echo Step 1: Upgrading pip...
 python -m pip install --upgrade pip
 echo.
 
-REM Install dependencies
-echo Installing dependencies...
-pip install -r requirements.txt
+REM Install dependencies (direct package names for reliability)
+echo Step 2: Installing packages...
+pip install playwright pandas openpyxl PyQt6 APScheduler beautifulsoup4 lxml aiofiles python-dotenv pydantic
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Failed to install packages.
@@ -78,7 +88,7 @@ if %errorlevel% neq 0 (
 echo.
 
 REM Install Playwright browser
-echo Installing Playwright browser...
+echo Step 3: Installing Playwright browser...
 playwright install chromium
 if %errorlevel% neq 0 (
     echo.
@@ -93,6 +103,16 @@ if not exist "data\db" mkdir "data\db"
 if not exist "data\output" mkdir "data\output"
 if not exist "data\screenshots" mkdir "data\screenshots"
 echo [OK] Data folders created
+echo.
+
+REM Verify installations
+echo ========================================
+echo   Verifying installations
+echo ========================================
+echo.
+pip show playwright >nul 2>&1 && echo [OK] playwright || echo [MISSING] playwright
+pip show PyQt6 >nul 2>&1 && echo [OK] PyQt6 || echo [MISSING] PyQt6
+pip show pandas >nul 2>&1 && echo [OK] pandas || echo [MISSING] pandas
 echo.
 
 echo ========================================
