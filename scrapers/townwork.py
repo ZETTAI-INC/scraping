@@ -459,6 +459,22 @@ class TownworkScraper(BaseScraper):
             if qualification_match:
                 detail_data["qualifications"] = qualification_match.group(1).strip()[:300]
 
+            # 掲載日（掲載開始日、掲載期間などから抽出）
+            # パターン1: 掲載期間 2024/01/01〜2024/01/31
+            published_match = re.search(r"掲載期間[：:\s]*(\d{4}[/\-]\d{1,2}[/\-]\d{1,2})", body_text)
+            if published_match:
+                detail_data["published_date"] = published_match.group(1)
+            else:
+                # パターン2: 掲載開始日
+                published_match2 = re.search(r"掲載開始[日]?[：:\s]*(\d{4}[/\-]\d{1,2}[/\-]\d{1,2})", body_text)
+                if published_match2:
+                    detail_data["published_date"] = published_match2.group(1)
+                else:
+                    # パターン3: 更新日・登録日
+                    published_match3 = re.search(r"(更新日|登録日)[：:\s]*(\d{4}[/\-]\d{1,2}[/\-]\d{1,2})", body_text)
+                    if published_match3:
+                        detail_data["published_date"] = published_match3.group(2)
+
         except Exception as e:
             logger.error(f"Error extracting detail info from {url}: {e}")
 

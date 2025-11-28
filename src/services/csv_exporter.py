@@ -41,6 +41,7 @@ class CSVExporter:
         ('contact_email', '担当者メールアドレス'),
         ('page_url', 'ページURL'),
         ('employee_count', '従業員数'),
+        ('published_date', '掲載日'),
         ('crawled_at', '取得日時'),
     ]
 
@@ -114,9 +115,17 @@ class CSVExporter:
         """求人データを出力用に加工"""
         processed = job.copy()
 
-        # 電話番号のフォーマット
-        phone = job.get('phone_number_normalized', job.get('phone_number', ''))
+        # 電話番号のフォーマット（phone または phone_number から取得）
+        phone = job.get('phone_number_normalized', job.get('phone_number', job.get('phone', '')))
         processed['phone_number_formatted'] = self._format_phone(phone)
+
+        # 住所の処理（address フィールドがある場合、address_pref に設定）
+        if job.get('address') and not job.get('address_pref'):
+            processed['address_pref'] = job.get('address', '')
+
+        # 事業内容のマッピング
+        if job.get('business_content') and not job.get('business_description'):
+            processed['business_description'] = job.get('business_content', '')
 
         # 日時のフォーマット
         crawled_at = job.get('crawled_at')

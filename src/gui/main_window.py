@@ -40,13 +40,14 @@ class CrawlWorker(QThread):
     error = pyqtSignal(str)
     time_update = pyqtSignal(float, int, int)  # elapsed_time, scraped_count, saved_count
 
-    def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int, parallel: int):
+    def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int, parallel: int, sources: List[str] = None):
         super().__init__()
         self.service = service
         self.keywords = keywords
         self.areas = areas
         self.max_pages = max_pages
         self.parallel = parallel
+        self.sources = sources or ["townwork"]  # デフォルトはタウンワーク
 
     def run(self):
         try:
@@ -54,18 +55,11 @@ class CrawlWorker(QThread):
             asyncio.set_event_loop(loop)
 
             # 進捗コールバックを設定
-            total_combinations = len(self.keywords) * len(self.areas)
+            total_combinations = len(self.keywords) * len(self.areas) * len(self.sources)
             current_idx = [0]  # リストにして参照渡し
 
             def progress_callback(message: str, current: int, total: int):
-                # キーワードと地域を計算
-                if current_idx[0] < total_combinations:
-                    kw_idx = current_idx[0] // len(self.areas)
-                    area_idx = current_idx[0] % len(self.areas)
-                    kw = self.keywords[kw_idx] if kw_idx < len(self.keywords) else ""
-                    area = self.areas[area_idx] if area_idx < len(self.areas) else ""
-                    detail_msg = f"[{area}] {kw} を検索中..."
-                    self.progress.emit(detail_msg, current_idx[0] + 1, total_combinations)
+                self.progress.emit(message, current_idx[0] + 1, total_combinations)
 
             self.service.set_progress_callback(progress_callback)
 
@@ -82,37 +76,50 @@ class CrawlWorker(QThread):
             # 時間計測開始
             start_time = time.time()
 
-            for kw in self.keywords:
-                for area in self.areas:
-                    # 進捗を報告
-                    self.progress.emit(f"[{area}] {kw} を検索中...", current_idx[0] + 1, total_combinations)
+            for source in self.sources:
+                for kw in self.keywords:
+                    for area in self.areas:
+                        # 進捗を報告
+                        source_label = "タウンワーク" if source == "townwork" else "Indeed"
+                        self.progress.emit(f"[{source_label}] {area} × {kw} を検索中...", current_idx[0] + 1, total_combinations)
 
-                    result = loop.run_until_complete(
-                        self.service.crawl_townwork(
-                            keywords=[kw],
-                            areas=[area],
-                            max_pages=self.max_pages,
-                            parallel=self.parallel
+                        if source == "townwork":
+                            result = loop.run_until_complete(
+                                self.service.crawl_townwork(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=self.max_pages,
+                                    parallel=self.parallel
+                                )
+                            )
+                        elif source == "indeed":
+                            result = loop.run_until_complete(
+                                self.service.crawl_indeed(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=1  # Indeed は403対策のため1ページ固定
+                                )
+                            )
+                        else:
+                            continue
+
+                        all_results['total_count'] += result.get('total_count', 0)
+                        all_results['scraped_count'] += result.get('scraped_count', result.get('total_count', 0))
+                        all_results['new_count'] += result.get('new_count', 0)
+                        all_results['saved_count'] += result.get('saved_count', 0)
+                        all_results['jobs'].extend(result.get('jobs', []))
+                        if result.get('error'):
+                            all_results['error'] = result['error']
+
+                        current_idx[0] += 1
+
+                        # 経過時間と取得件数を報告
+                        elapsed = time.time() - start_time
+                        self.time_update.emit(
+                            elapsed,
+                            all_results['scraped_count'],
+                            all_results['saved_count']
                         )
-                    )
-
-                    all_results['total_count'] += result.get('total_count', 0)
-                    all_results['scraped_count'] += result.get('scraped_count', result.get('total_count', 0))
-                    all_results['new_count'] += result.get('new_count', 0)
-                    all_results['saved_count'] += result.get('saved_count', 0)
-                    all_results['jobs'].extend(result.get('jobs', []))
-                    if result.get('error'):
-                        all_results['error'] = result['error']
-
-                    current_idx[0] += 1
-
-                    # 経過時間と取得件数を報告
-                    elapsed = time.time() - start_time
-                    self.time_update.emit(
-                        elapsed,
-                        all_results['scraped_count'],
-                        all_results['saved_count']
-                    )
 
             # 時間計測終了
             end_time = time.time()
@@ -155,7 +162,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         """UIを初期化"""
-        self.setWindowTitle("求人情報自動収集システム - タウンワーク")
+        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed")
         self.setMinimumSize(1200, 800)
 
         # メインウィジェット
@@ -200,10 +207,16 @@ class MainWindow(QMainWindow):
         # 媒体選択（タブの上に配置）
         source_group = QGroupBox("対象媒体")
         source_layout = QVBoxLayout(source_group)
+
         self.townwork_check = QCheckBox("タウンワーク")
         self.townwork_check.setChecked(True)
-        self.townwork_check.setEnabled(False)
         source_layout.addWidget(self.townwork_check)
+
+        self.indeed_check = QCheckBox("Indeed")
+        self.indeed_check.setChecked(False)
+        self.indeed_check.setToolTip("Indeed検索（403対策のため1ページ/組み合わせに制限）")
+        source_layout.addWidget(self.indeed_check)
+
         layout.addWidget(source_group)
 
         # タブウィジェット（3つのタブ）
@@ -750,8 +763,23 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.stats_label.setText(f"エラー: {e}")
 
+    def get_selected_sources(self) -> List[str]:
+        """選択された媒体を取得"""
+        sources = []
+        if self.townwork_check.isChecked():
+            sources.append("townwork")
+        if self.indeed_check.isChecked():
+            sources.append("indeed")
+        return sources
+
     def start_crawl(self):
         """クローリングを開始"""
+        # 選択された媒体を取得
+        sources = self.get_selected_sources()
+        if not sources:
+            QMessageBox.warning(self, "警告", "対象媒体を1つ以上選択してください")
+            return
+
         # 選択されたキーワードを取得
         keywords = self.get_selected_keywords()
         if not keywords:
@@ -767,11 +795,19 @@ class MainWindow(QMainWindow):
         max_pages = self.max_pages_spin.value()
         parallel = self.parallel_spin.value()
 
+        # 媒体名リスト（表示用）
+        source_names = []
+        if "townwork" in sources:
+            source_names.append("タウンワーク")
+        if "indeed" in sources:
+            source_names.append("Indeed")
+
         # 確認ダイアログ
-        total_combinations = len(keywords) * len(areas)
+        total_combinations = len(keywords) * len(areas) * len(sources)
         if total_combinations > 10:
             reply = QMessageBox.question(
                 self, "確認",
+                f"媒体: {', '.join(source_names)}\n"
                 f"キーワード: {len(keywords)}個\n地域: {len(areas)}個\n"
                 f"合計 {total_combinations} パターンを検索します。\n\n"
                 f"処理に時間がかかる可能性があります。続行しますか？",
@@ -788,9 +824,9 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.time_label.setVisible(True)
         self.time_label.setText("経過時間: 0秒 | 取得: 0件 | 保存: 0件")
-        self.statusBar.showMessage(f"クローリング中... ({len(keywords)}キーワード x {len(areas)}地域)")
+        self.statusBar.showMessage(f"クローリング中... ({', '.join(source_names)} / {len(keywords)}キーワード x {len(areas)}地域)")
 
-        self.crawl_worker = CrawlWorker(self.service, keywords, areas, max_pages, parallel)
+        self.crawl_worker = CrawlWorker(self.service, keywords, areas, max_pages, parallel, sources)
         self.crawl_worker.finished.connect(self.on_crawl_finished)
         self.crawl_worker.progress.connect(self.on_crawl_progress)
         self.crawl_worker.error.connect(self.on_crawl_error)

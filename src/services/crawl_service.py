@@ -14,6 +14,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from scrapers.townwork import TownworkScraper
+from scrapers.indeed import IndeedScraper
 from src.database.db_manager import DatabaseManager
 from src.database.job_repository import JobRepository
 from src.filters.job_filter import JobFilter, FilterResult
@@ -38,9 +39,10 @@ class CrawlService:
         self.job_filter = JobFilter()
         self.csv_exporter = CSVExporter(output_dir)
 
-        # スクレイパー（タウンワークのみ）
+        # スクレイパー
         self.scrapers = {
             "townwork": TownworkScraper,
+            "indeed": IndeedScraper,
         }
 
         # 進捗コールバック
@@ -125,7 +127,8 @@ class CrawlService:
         areas: List[str],
         max_pages: int = 5,
         parallel: int = 5,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        fetch_details: bool = True
     ) -> Dict[str, Any]:
         """
         タウンワークをクロール
@@ -136,10 +139,15 @@ class CrawlService:
             max_pages: 最大ページ数
             parallel: 並列数
             filters: 検索フィルタ
+            fetch_details: 詳細ページから追加情報を取得するか
 
         Returns:
             クロール結果
         """
+        from playwright.async_api import async_playwright
+        from utils.stealth import StealthConfig, create_stealth_context
+        import random
+
         result = {
             'source': 'townwork',
             'keywords': keywords,
@@ -171,7 +179,111 @@ class CrawlService:
 
             result['total_count'] = len(jobs)
             result['scraped_count'] = len(jobs)
-            self._report_progress(f"取得完了: {len(jobs)}件", 1, 2)
+            self._report_progress(f"一覧取得完了: {len(jobs)}件", 1, 3)
+
+            # 詳細ページから追加情報を取得
+            if fetch_details and jobs:
+                # job_idで重複を除去し、ユニークな求人のみ詳細取得
+                seen_job_ids = set()
+                unique_jobs = []
+                duplicate_count = 0
+
+                for job in jobs:
+                    job_id = job.get('job_number') or job.get('job_id')
+                    job_url = job.get('page_url') or job.get('url')
+
+                    # job_idがある場合は重複チェック
+                    if job_id:
+                        if job_id in seen_job_ids:
+                            duplicate_count += 1
+                            continue
+                        seen_job_ids.add(job_id)
+                    # job_idがない場合はURLで重複チェック
+                    elif job_url:
+                        normalized_url = self._normalize_url(job_url)
+                        if normalized_url in seen_job_ids:
+                            duplicate_count += 1
+                            continue
+                        seen_job_ids.add(normalized_url)
+
+                    unique_jobs.append(job)
+
+                if duplicate_count > 0:
+                    logger.info(f"重複求人をスキップ: {duplicate_count}件（ユニーク: {len(unique_jobs)}件）")
+
+                self._report_progress(f"詳細情報取得中（{len(unique_jobs)}件）...", 2, 3)
+
+                # 並列処理で詳細ページを取得
+                async with async_playwright() as p:
+                    launch_args = StealthConfig.get_launch_args()
+                    launch_args["headless"] = True
+                    browser = await p.chromium.launch(**launch_args)
+
+                    try:
+                        # 並列数の設定（サーバー負荷を考慮して3に制限）
+                        max_concurrent = 3
+                        semaphore = asyncio.Semaphore(max_concurrent)
+
+                        async def fetch_detail_with_semaphore(job, idx):
+                            async with semaphore:
+                                job_url = job.get('page_url') or job.get('url')
+                                if not job_url:
+                                    return
+
+                                # 各タスクごとに新しいコンテキストとページを作成
+                                context = await create_stealth_context(browser)
+                                try:
+                                    page = await context.new_page()
+                                    await StealthConfig.apply_stealth_scripts(page)
+
+                                    self._report_progress(
+                                        f"詳細取得中 ({idx+1}/{len(unique_jobs)})",
+                                        idx + 1,
+                                        len(unique_jobs)
+                                    )
+
+                                    detail_data = await scraper.extract_detail_info(page, job_url)
+                                    job.update(detail_data)
+
+                                    # サーバー負荷軽減のため待機
+                                    await page.wait_for_timeout(random.randint(300, 800))
+
+                                except Exception as e:
+                                    logger.warning(f"Failed to fetch detail for {job_url}: {e}")
+                                finally:
+                                    await context.close()
+
+                        # 全ての詳細取得タスクを並列実行
+                        tasks = [
+                            fetch_detail_with_semaphore(job, idx)
+                            for idx, job in enumerate(unique_jobs)
+                        ]
+                        await asyncio.gather(*tasks)
+
+                        # 重複していた求人にも詳細データをコピー
+                        job_id_to_detail = {}
+                        for job in unique_jobs:
+                            job_id = job.get('job_number') or job.get('job_id')
+                            if job_id:
+                                job_id_to_detail[job_id] = {
+                                    k: v for k, v in job.items()
+                                    if k in ['address', 'phone', 'business_content',
+                                             'job_description', 'published_date', 'postal_code',
+                                             'working_hours', 'holidays', 'qualifications']
+                                }
+
+                        # 重複求人に詳細データを適用
+                        for job in jobs:
+                            job_id = job.get('job_number') or job.get('job_id')
+                            if job_id and job_id in job_id_to_detail:
+                                for key, value in job_id_to_detail[job_id].items():
+                                    if key not in job or not job[key]:
+                                        job[key] = value
+
+                    finally:
+                        await browser.close()
+
+            self._report_progress(f"取得完了: {len(jobs)}件", 3, 3)
 
             # デバッグログ出力
             if DEBUG_JOB_LOG:
@@ -224,6 +336,221 @@ class CrawlService:
 
         result['finished_at'] = datetime.now()
         return result
+
+    async def crawl_indeed(
+        self,
+        keywords: List[str],
+        areas: List[str],
+        max_pages: int = 1,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Indeedをクロール
+
+        Args:
+            keywords: 検索キーワードリスト
+            areas: 地域リスト
+            max_pages: 最大ページ数（403対策のため1推奨）
+            filters: 検索フィルタ
+
+        Returns:
+            クロール結果
+        """
+        from playwright.async_api import async_playwright
+        from utils.stealth import StealthConfig, create_stealth_context
+
+        result = {
+            'source': 'indeed',
+            'keywords': keywords,
+            'areas': areas,
+            'started_at': datetime.now(),
+            'finished_at': None,
+            'total_count': 0,
+            'scraped_count': 0,
+            'saved_count': 0,
+            'new_count': 0,
+            'jobs': [],
+            'error': None,
+        }
+
+        try:
+            self._report_progress("Indeed クローリング開始", 0, 1)
+
+            # スクレイパー初期化
+            scraper = IndeedScraper()
+
+            all_jobs = []
+
+            async with async_playwright() as p:
+                # Stealth設定を取得
+                launch_args = StealthConfig.get_launch_args()
+                launch_args["headless"] = False  # ブラウザ表示（ボット検出対策）
+
+                browser = await p.chromium.launch(**launch_args)
+
+                try:
+                    context = await create_stealth_context(browser)
+                    page = await context.new_page()
+                    await StealthConfig.apply_stealth_scripts(page)
+
+                    # キーワード×地域の組み合わせでスクレイピング
+                    total_combinations = len(keywords) * len(areas)
+                    current_idx = 0
+
+                    for keyword in keywords:
+                        for area in areas:
+                            current_idx += 1
+                            self._report_progress(
+                                f"[Indeed] {area} × {keyword} を検索中...",
+                                current_idx,
+                                total_combinations
+                            )
+
+                            # 検索実行
+                            url = scraper.generate_search_url(keyword, area, 1)
+                            logger.info(f"Navigating to: {url}")
+
+                            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+                            # JS描画待機（長めに）
+                            await page.wait_for_timeout(5000)
+
+                            # カードが読み込まれるまで待機
+                            try:
+                                await page.wait_for_selector(".job_seen_beacon", timeout=10000)
+                            except Exception:
+                                logger.warning(f"Job cards not found for {keyword} in {area}, trying alternative wait...")
+                                await page.wait_for_timeout(3000)
+
+                            # カードを取得
+                            cards = await page.query_selector_all(".job_seen_beacon")
+                            logger.info(f"Found {len(cards)} job cards for {keyword} in {area}")
+
+                            for card in cards:
+                                try:
+                                    job_data = await scraper._extract_card_data(card)
+                                    if job_data:
+                                        job_data['keyword'] = keyword
+                                        job_data['area'] = area
+                                        all_jobs.append(job_data)
+                                except Exception as e:
+                                    logger.error(f"Error extracting job card: {e}")
+                                    continue
+
+                            # 403対策：組み合わせ間の待機
+                            import random
+                            await page.wait_for_timeout(random.randint(3000, 5000))
+
+                    await context.close()
+
+                except Exception as e:
+                    logger.error(f"Indeed scraping error: {e}")
+                    result['error'] = str(e)
+
+                finally:
+                    await browser.close()
+
+            result['total_count'] = len(all_jobs)
+            result['scraped_count'] = len(all_jobs)
+            self._report_progress(f"取得完了: {len(all_jobs)}件", 1, 2)
+
+            # デバッグログ出力
+            if DEBUG_JOB_LOG and all_jobs:
+                self._output_debug_job_log(all_jobs)
+
+            # データベースに保存
+            saved_count = 0
+            new_count = 0
+            for job in all_jobs:
+                try:
+                    if job.get('page_url'):
+                        job['page_url'] = self._normalize_url(job['page_url'])
+
+                    job['crawled_at'] = datetime.now()
+                    existing = self._check_existing_indeed(job)
+                    self.job_repository.save_job(job, "indeed")
+
+                    saved_count += 1
+                    if not existing:
+                        new_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to save job: {e}")
+
+            result['saved_count'] = saved_count
+            result['new_count'] = new_count
+            result['jobs'] = [self._prepare_job_record(job) for job in all_jobs]
+
+            self._report_progress(f"保存完了: {saved_count}件（新着: {new_count}件）", 2, 2)
+            self._save_crawl_log_indeed(result)
+
+        except Exception as e:
+            result['error'] = str(e)
+            logger.error(f"Indeed crawl error: {e}", exc_info=True)
+
+        result['finished_at'] = datetime.now()
+        return result
+
+    def _check_existing_indeed(self, job: Dict[str, Any]) -> bool:
+        """Indeed求人の既存チェック"""
+        source_id = self.db_manager.get_source_id("indeed")
+        if not source_id:
+            return False
+
+        job_identifier = job.get('job_number')
+        page_url = self._normalize_url(job.get('page_url'))
+
+        if not job_identifier and not page_url:
+            return False
+
+        with self.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM jobs
+                WHERE source_id = ?
+                  AND (job_id = ? OR page_url = ?)
+                LIMIT 1
+                """,
+                (source_id, job_identifier or page_url, page_url or job_identifier)
+            )
+            return cursor.fetchone() is not None
+
+    def _save_crawl_log_indeed(self, result: Dict[str, Any]):
+        """Indeedのクロールログを保存"""
+        source_id = self.db_manager.get_source_id("indeed")
+        if not source_id:
+            # Indeedソースがない場合は作成
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR IGNORE INTO sources (name, url) VALUES (?, ?)",
+                    ("indeed", "https://jp.indeed.com")
+                )
+                conn.commit()
+            source_id = self.db_manager.get_source_id("indeed")
+
+        if source_id:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO crawl_logs (
+                        source_id, keyword, area, status,
+                        total_count, new_count, error_message,
+                        started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    source_id,
+                    ','.join(result['keywords']),
+                    ','.join(result['areas']),
+                    'error' if result['error'] else 'success',
+                    result['total_count'],
+                    result['new_count'],
+                    result['error'],
+                    result['started_at'],
+                    result['finished_at'],
+                ))
+                conn.commit()
 
     def _check_existing(self, job: Dict[str, Any]) -> bool:
         """既存の求人かチェック"""
@@ -282,6 +609,12 @@ class CrawlService:
             "employment_type": job.get("employment_type", ""),
             "page_url": job.get("page_url") or job.get("url", ""),
             "crawled_at": job.get("crawled_at"),
+            # 詳細ページから取得する追加フィールド
+            "address": job.get("address", ""),
+            "phone": job.get("phone", ""),
+            "business_content": job.get("business_content", ""),
+            "job_description": job.get("job_description", ""),
+            "published_date": job.get("published_date", ""),
         }
 
     def _save_crawl_log(self, result: Dict[str, Any]):
