@@ -522,14 +522,44 @@ class BaitoruScraper(BaseScraper):
             except Exception:
                 pass
 
-            # 電話番号をセレクタから取得
+            # 「電話番号を表示する」ボタンをクリックして電話番号を取得
             try:
+                # ボタンを探してクリック
+                phone_button_selectors = [
+                    "button:has-text('電話番号を表示')",
+                    "a:has-text('電話番号を表示')",
+                    "[class*='phone'] button",
+                    "[class*='tel'] button",
+                    "button:has-text('電話番号')",
+                    ".showTel",
+                    "[data-action*='phone']",
+                    "[onclick*='phone']",
+                ]
+
+                phone_button_clicked = False
+                for btn_sel in phone_button_selectors:
+                    try:
+                        phone_btn = await page.query_selector(btn_sel)
+                        if phone_btn:
+                            await phone_btn.click()
+                            phone_button_clicked = True
+                            logger.debug(f"Clicked phone button with selector: {btn_sel}")
+                            # ボタンクリック後、電話番号が表示されるまで待機
+                            await page.wait_for_timeout(1000)
+                            break
+                    except Exception as e:
+                        logger.debug(f"Failed to click phone button {btn_sel}: {e}")
+                        continue
+
+                # 電話番号をセレクタから取得
                 tel_selectors = [
+                    "a[href^='tel:']",
                     "td:has-text('TEL') + td",
                     "th:has-text('電話') + td",
                     "[class*='tel']",
                     "[class*='phone']",
-                    "a[href^='tel:']",
+                    ".telNumber",
+                    "[class*='telNum']",
                 ]
                 for sel in tel_selectors:
                     try:
@@ -544,14 +574,16 @@ class BaitoruScraper(BaseScraper):
                             if tel_text:
                                 # 数字のみ抽出
                                 phone_raw = re.sub(r"[^\d]", "", tel_text)
-                                if len(phone_raw) >= 9 and not phone_raw.startswith("0500000"):
+                                # 有効な電話番号かチェック（0120除外、マスク番号除外）
+                                if len(phone_raw) >= 9 and not phone_raw.startswith("0500000") and not phone_raw.startswith("0120"):
                                     detail_data["phone"] = phone_raw
                                     detail_data["phone_number_normalized"] = phone_raw
+                                    logger.debug(f"Found phone number: {phone_raw}")
                                     break
                     except Exception:
                         continue
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error getting phone number: {e}")
 
             body_text = await page.inner_text("body")
 
