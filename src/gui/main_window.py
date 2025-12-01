@@ -842,12 +842,12 @@ class MainWindow(QMainWindow):
         control_layout = QHBoxLayout()
 
         control_layout.addWidget(QLabel("過去"))
-        self.analysis_days_spin = QSpinBox()
-        self.analysis_days_spin.setRange(1, 365)
-        self.analysis_days_spin.setValue(30)
-        self.analysis_days_spin.setSuffix(" 日")
-        self.analysis_days_spin.setMinimumWidth(80)
-        control_layout.addWidget(self.analysis_days_spin)
+        self.analysis_count_spin = QSpinBox()
+        self.analysis_count_spin.setRange(1, 100)
+        self.analysis_count_spin.setValue(20)
+        self.analysis_count_spin.setSuffix(" 回")
+        self.analysis_count_spin.setMinimumWidth(80)
+        control_layout.addWidget(self.analysis_count_spin)
 
         control_layout.addWidget(QLabel("の推移"))
 
@@ -885,31 +885,21 @@ class MainWindow(QMainWindow):
 
     def update_analysis_chart(self):
         """分析チャートを更新"""
-        days = self.analysis_days_spin.value()
+        count = self.analysis_count_spin.value()
 
-        # クロールログを取得
-        crawl_data = self._get_crawl_logs(days)
+        # クロールログを取得（回数ごと）
+        crawl_data = self._get_crawl_logs(count)
 
         if not crawl_data:
-            self.analysis_summary_label.setText(f"過去{days}日間のクローリングデータがありません")
+            self.analysis_summary_label.setText(f"クローリングデータがありません")
             self.analysis_figure.clear()
             self.analysis_canvas.draw()
             return
 
-        # 日付ごとに集計
-        from collections import defaultdict
-        daily_new_counts = defaultdict(int)
-        daily_total_counts = defaultdict(int)
-
-        for row in crawl_data:
-            date_str = row['date']
-            daily_new_counts[date_str] += row['new_count']
-            daily_total_counts[date_str] += row['total_count']
-
-        # 日付でソート
-        sorted_dates = sorted(daily_new_counts.keys())
-        new_counts = [daily_new_counts[d] for d in sorted_dates]
-        total_counts = [daily_total_counts[d] for d in sorted_dates]
+        # データを抽出
+        labels = [row['label'] for row in crawl_data]
+        new_counts = [row['new_count'] for row in crawl_data]
+        total_counts = [row['total_count'] for row in crawl_data]
 
         # グラフ描画
         self.analysis_figure.clear()
@@ -918,32 +908,31 @@ class MainWindow(QMainWindow):
         # 日本語フォント設定（Windows用）
         plt.rcParams['font.family'] = ['Yu Gothic', 'MS Gothic', 'Meiryo', 'sans-serif']
 
-        x = np.arange(len(sorted_dates))
-        width = 0.12  # 棒の幅を1/3に
+        x = np.arange(len(labels))
+        width = 0.12
 
         bars1 = ax.bar(x - width/2, new_counts, width, label='新規取得', color='#4caf50', alpha=0.8)
         bars2 = ax.bar(x + width/2, total_counts, width, label='総抽出', color='#2196f3', alpha=0.6)
 
-        ax.set_xlabel('日付')
+        ax.set_xlabel('実行回')
         ax.set_ylabel('件数')
-        ax.set_title(f'過去{days}日間の新規取得件数推移')
+        ax.set_title(f'過去{count}回の新規取得件数推移')
         ax.set_xticks(x)
 
-        # 日付ラベルを見やすく
-        if len(sorted_dates) > 10:
-            # 10日以上の場合は間引き表示
-            step = max(1, len(sorted_dates) // 10)
-            labels = [d if i % step == 0 else '' for i, d in enumerate(sorted_dates)]
+        # ラベルを見やすく
+        if len(labels) > 15:
+            step = max(1, len(labels) // 15)
+            display_labels = [l if i % step == 0 else '' for i, l in enumerate(labels)]
         else:
-            labels = sorted_dates
+            display_labels = labels
 
-        ax.set_xticklabels(labels, rotation=45, ha='right')
+        ax.set_xticklabels(display_labels, rotation=45, ha='right', fontsize=8)
         ax.legend()
 
         # 値をバーの上に表示
-        for bar, count in zip(bars1, new_counts):
-            if count > 0:
-                ax.annotate(f'{count}',
+        for bar, cnt in zip(bars1, new_counts):
+            if cnt > 0:
+                ax.annotate(f'{cnt}',
                            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
                            xytext=(0, 3),
                            textcoords="offset points",
@@ -957,36 +946,52 @@ class MainWindow(QMainWindow):
         total_extracted = sum(total_counts)
         avg_new = total_new / len(new_counts) if new_counts else 0
         max_new = max(new_counts) if new_counts else 0
-        max_date = sorted_dates[new_counts.index(max_new)] if new_counts and max_new > 0 else '-'
+        max_idx = new_counts.index(max_new) if new_counts and max_new > 0 else -1
+        max_label = labels[max_idx] if max_idx >= 0 else '-'
 
         self.analysis_summary_label.setText(
-            f"期間: {sorted_dates[0]} ～ {sorted_dates[-1]} | "
+            f"表示: {len(crawl_data)}回分 | "
             f"累計新規: {total_new:,}件 | 累計抽出: {total_extracted:,}件 | "
-            f"平均新規: {avg_new:.1f}件/日 | 最大新規: {max_new}件 ({max_date})"
+            f"平均新規: {avg_new:.1f}件/回 | 最大新規: {max_new}件 ({max_label})"
         )
 
-    def _get_crawl_logs(self, days: int) -> List[Dict]:
-        """過去n日のクロールログを取得"""
+    def _get_crawl_logs(self, limit: int) -> List[Dict]:
+        """過去n回のクロールログを取得"""
         try:
-            from datetime import timedelta
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=days)
-
             with self.service.db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT
-                        date(started_at) as date,
-                        SUM(new_count) as new_count,
-                        SUM(total_count) as total_count
+                        id,
+                        started_at,
+                        new_count,
+                        total_count
                     FROM crawl_logs
-                    WHERE started_at >= ?
-                    GROUP BY date(started_at)
-                    ORDER BY date(started_at)
-                """, (start_date.strftime('%Y-%m-%d'),))
+                    ORDER BY started_at DESC
+                    LIMIT ?
+                """, (limit,))
 
                 rows = cursor.fetchall()
-                return [{'date': row[0], 'new_count': row[1] or 0, 'total_count': row[2] or 0} for row in rows]
+                # 古い順に並べ替え
+                rows = list(reversed(rows))
+                result = []
+                for row in rows:
+                    started_at = row[1]
+                    # 日時からラベルを作成（MM/DD HH:MM形式）
+                    if started_at:
+                        try:
+                            dt = datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
+                            label = dt.strftime('%m/%d %H:%M')
+                        except:
+                            label = started_at[:16] if len(started_at) >= 16 else started_at
+                    else:
+                        label = f"#{row[0]}"
+                    result.append({
+                        'label': label,
+                        'new_count': row[2] or 0,
+                        'total_count': row[3] or 0
+                    })
+                return result
         except Exception as e:
             logger.error(f"Error fetching crawl logs: {e}")
             return []
