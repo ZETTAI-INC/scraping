@@ -23,20 +23,41 @@ class BaitoruScraper(BaseScraper):
     def __init__(self):
         super().__init__(site_name="baitoru")
 
-    def generate_search_url(self, keyword: str, area: str, page: int = 1) -> str:
+    def get_categories_for_keyword(self, keyword: str) -> List[str]:
+        """
+        キーワードに対応するカテゴリのリストを取得
+
+        Args:
+            keyword: 検索キーワード
+
+        Returns:
+            カテゴリコードのリスト（見つからない場合は空リスト）
+        """
+        job_categories = self.site_config.get("job_categories", {})
+        category = job_categories.get(keyword, None)
+
+        if category is None:
+            return []
+        elif isinstance(category, list):
+            return category
+        else:
+            return [category]
+
+    def generate_search_url(self, keyword: str, area: str, page: int = 1, category: str = None) -> str:
         """
         バイトル用の検索URL生成
 
         バイトルのURL構造:
         - カテゴリなし: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/
         - カテゴリあり（新着順）: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/{category}/srt2/
-        - キーワード検索（新着順）: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/kw{keyword}/srt2/
+        - キーワード検索（新着順）: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/wrd{keyword}/srt2/
         - ページ指定: 上記 + page{page}/
 
         Args:
             keyword: 職種カテゴリ名（販売, 飲食, 事務 など）またはキーワード
             area: エリア名（東京, 大阪 など）
             page: ページ番号
+            category: カテゴリコード（直接指定する場合）
         """
         area_codes = self.site_config.get("area_codes", {})
         area_config = area_codes.get(area, area_codes.get("東京"))
@@ -51,9 +72,10 @@ class BaitoruScraper(BaseScraper):
             prefecture = "tokyo"
             area_path = "23ku"
 
-        # 職種カテゴリコードを取得
-        job_categories = self.site_config.get("job_categories", {})
-        category = job_categories.get(keyword, "") if keyword else ""
+        # カテゴリが直接指定されていない場合は検索
+        if category is None:
+            categories = self.get_categories_for_keyword(keyword)
+            category = categories[0] if categories else ""
 
         if category:
             # カテゴリ指定あり（新着順 srt2）
@@ -227,11 +249,39 @@ class BaitoruScraper(BaseScraper):
     async def search_jobs(self, page: Page, keyword: str, area: str, max_pages: int = 5) -> List[Dict[str, Any]]:
         """
         求人検索を実行し、結果を返す
+        複数カテゴリがある場合は、各カテゴリで検索を実行
+        """
+        all_jobs = []
+
+        # キーワードに対応するカテゴリのリストを取得
+        categories = self.get_categories_for_keyword(keyword)
+
+        # カテゴリがない場合はキーワード検索（カテゴリとしてNoneを指定）
+        if not categories:
+            categories = [None]
+            logger.info(f"No categories found for '{keyword}', will use keyword search")
+        else:
+            logger.info(f"Found {len(categories)} categories for '{keyword}': {categories}")
+
+        for category in categories:
+            category_jobs = await self._search_category(page, keyword, area, category, max_pages)
+            all_jobs.extend(category_jobs)
+
+            # 複数カテゴリの場合は待機
+            if len(categories) > 1 and category != categories[-1]:
+                import random
+                await page.wait_for_timeout(random.randint(2000, 4000))
+
+        return all_jobs
+
+    async def _search_category(self, page: Page, keyword: str, area: str, category: str, max_pages: int) -> List[Dict[str, Any]]:
+        """
+        単一カテゴリの検索を実行
         """
         all_jobs = []
 
         for page_num in range(1, max_pages + 1):
-            url = self.generate_search_url(keyword, area, page_num)
+            url = self.generate_search_url(keyword, area, page_num, category=category)
             logger.info(f"Fetching page {page_num}: {url}")
 
             success = False
