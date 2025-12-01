@@ -143,28 +143,190 @@
   "baitoru": {
     "name": "バイトル",
     "base_url": "https://www.baitoru.com",
-    "search_url_pattern": "https://www.baitoru.com/search/?kw={keyword}&pref={area}&p={page}",
+    "search_url_pattern": "https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/",
+    "search_url_pattern_category": "https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/{category}/srt2/",
+    "search_url_pattern_page": "https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/page{page}/",
+    "search_url_pattern_category_page": "https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/{category}/srt2/page{page}/",
+    "sort": {
+      "newest": "srt2"
+    },
+    "job_categories": {
+      "販売": "sales",
+      "フード": "food",
+      "飲食": "food",
+      "レストラン": "restaurant",
+      "カフェ": "cafe",
+      "バー": "bar",
+      "居酒屋": "izakaya",
+      "ファストフード": "fastfood",
+      "キッチン": "kitchen",
+      "調理": "kitchen",
+      "バーテンダー": "bartender",
+      "パティシエ": "patissier",
+      "オフィス": "office",
+      "事務": "office",
+      "コールセンター": "callcenter",
+      "経理": "bookkeeping",
+      "秘書": "secretary",
+      "受付": "receptionist",
+      "インフォメーション": "information",
+      "工場": "factory",
+      "製造": "factory",
+      "配達": "delivery",
+      "配送": "delivery",
+      "ピッキング": "picking",
+      "梱包": "packing",
+      "仕分け": "sorting",
+      "軽作業": "sorting",
+      "フォークリフト": "forklift",
+      "引越し": "moving",
+      "警備": "guard",
+      "サービス": "service",
+      "接客": "service",
+      "ホテル": "hotel",
+      "美容": "beauty",
+      "理容": "barber",
+      "理容師": "barber",
+      "清掃": "cleaning",
+      "ドライバー": "driver",
+      "運転": "driver",
+      "イベント": "event",
+      "カラオケ": "karaoke",
+      "ゲーム": "game",
+      "プール": "pool",
+      "ジム": "gym",
+      "フィットネス": "gym",
+      "ボウリング": "bowling",
+      "映画館": "theater",
+      "劇場": "theater",
+      "教育": "education",
+      "塾": "education",
+      "スクール": "school",
+      "家庭教師": "tutor",
+      "保育": "kindergarten",
+      "病院": "hospital",
+      "医療": "hospital",
+      "看護": "nurse",
+      "看護師": "nurse",
+      "薬剤師": "pharmacy",
+      "デイサービス": "dayservice",
+      "グループホーム": "grouphome",
+      "老人ホーム": "nursinghome",
+      "介護": "dayservice",
+      "デザイン": "design",
+      "クリエイティブ": "creative",
+      "Webデザイナー": "webdesigner",
+      "Webデザイン": "webdesigner",
+      "プログラマー": "programmer",
+      "編集": "editor",
+      "通訳": "interpreter",
+      "マーケティング": "marketing",
+      "整備士": "mechanic",
+      "建築": "architecture",
+      "コンサルタント": "consultant",
+      "セラピスト": "therapist",
+      "マッサージ": "massage",
+      "モデル": "model",
+      "音楽": "music",
+      "ナイトワーク": "nightwork",
+      "プロフェッショナル": "professional",
+      "専門": "professional"
+    },
     "selectors": {
-      "job_cards": ".cassetteRecruit",
-      "title": ".cassetteRecruit__name",
-      "company": ".cassetteRecruit__name em",
-      "location": ".cassetteRecruit__area",
-      "salary": ".cassetteRecruit__salary",
-      "employment_type": ".cassetteRecruit__attribute",
-      "detail_link": "a.cassetteRecruit__name",
-      "phone": ".tel-number",
-      "address": ".address-text"
+      "job_cards": "article.list-jobListDetail",
+      "title": ".pt02b .ul01 .li01 h3 a span",
+      "company": ".pt02b > p",
+      "location": ".pt02b .ul02 li",
+      "salary": ".pt03 dl:nth-child(2) dd li em",
+      "employment_type": ".pt01a .ul01 li:first-child",
+      "detail_link": ".pt02b .ul01 .li01 h3 a",
+      "job_type": ".pt03 dl:nth-child(1) dd li",
+      "working_hours": ".pt03 dl:nth-child(3) dd li",
+      "tags": ".pt04 ul li em",
+      "job_number": ".pt09 .p06"
     },
     "detail_selectors": {
-      "company_kana": ".company-name-kana",
-      "postal_code": ".zip-code",
-      "fax": ".fax",
-      "job_number": ".job-code",
-      "business_content": ".business-info"
+      "company_name": ".pt02b > p",
+      "postal_code": "body",
+      "phone": "body",
+      "job_number": ".pt09 .p06",
+      "business_content": "body"
+    },
+    "area_codes": {
+      "東京": {
+        "region": "kanto",
+        "prefecture": "tokyo",
+        "area": "23ku"
+      },
+      "東京23区": {
+        "region": "kanto",
+        "prefecture": "tokyo",
+        "area": "23ku"
+      },
+      "新宿": {
+        "region": "kanto",
+        "prefecture": "tokyo",
+        "area": "23ku/shinjukuku"
+      },
+      "渋谷": {
+        "region": "kanto",
+        "prefecture": "tokyo",
+        "area": "23ku/shibuyaku"
+      },
+      "大阪": {
+        "region": "kansai",
+        "prefecture": "osaka",
+        "area": "osakashi"
+      },
+      "神奈川": {
+        "region": "kanto",
+        "prefecture": "kanagawa",
+        "area": "yokohamashi"
+      },
+      "横浜": {
+        "region": "kanto",
+        "prefecture": "kanagawa",
+        "area": "yokohamashi"
+      },
+      "埼玉": {
+        "region": "kanto",
+        "prefecture": "saitama",
+        "area": "saitamashi"
+      },
+      "千葉": {
+        "region": "kanto",
+        "prefecture": "chiba",
+        "area": "chibashi"
+      },
+      "愛知": {
+        "region": "tokai",
+        "prefecture": "aichi",
+        "area": "nagoyashi"
+      },
+      "名古屋": {
+        "region": "tokai",
+        "prefecture": "aichi",
+        "area": "nagoyashi"
+      },
+      "福岡": {
+        "region": "kyushu",
+        "prefecture": "fukuoka",
+        "area": "fukuokashi"
+      },
+      "北海道": {
+        "region": "hokkaido",
+        "prefecture": "hokkaido",
+        "area": "sapporoshi"
+      },
+      "札幌": {
+        "region": "hokkaido",
+        "prefecture": "hokkaido",
+        "area": "sapporoshi"
+      }
     },
     "pagination": {
       "type": "page_number",
-      "param": "p",
+      "param": "page",
       "start": 1
     }
   },
