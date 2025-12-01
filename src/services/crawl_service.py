@@ -598,6 +598,7 @@ class CrawlService:
 
             all_jobs = []
             seen_job_ids = set()  # 重複防止用のjob_idセット
+            total_raw_count = 0  # 重複を含む生の取得件数
 
             async with async_playwright() as p:
                 # Stealth設定を取得
@@ -625,7 +626,7 @@ class CrawlService:
                             )
 
                             # スクレイピング実行（seen_job_idsを渡して重複を防止）
-                            jobs = await scraper.search_jobs(
+                            search_result = await scraper.search_jobs(
                                 page=page,
                                 keyword=keyword,
                                 area=area,
@@ -633,7 +634,10 @@ class CrawlService:
                                 seen_job_ids=seen_job_ids
                             )
 
-                            logger.info(f"Found {len(jobs)} jobs for keyword: {keyword} in {area}")
+                            jobs = search_result['jobs']
+                            total_raw_count += search_result['raw_count']
+
+                            logger.info(f"Found {len(jobs)} unique jobs (raw: {search_result['raw_count']}) for keyword: {keyword} in {area}")
 
                             # 派遣フィルタが有効かチェック
                             enable_dispatch_filter = filters.get('enable_dispatch_keyword', True) if filters else True
@@ -710,8 +714,8 @@ class CrawlService:
                     await browser.close()
 
             result['total_count'] = len(all_jobs)
-            result['scraped_count'] = len(all_jobs)
-            self._report_progress(f"取得完了: {len(all_jobs)}件", 1, 2)
+            result['scraped_count'] = total_raw_count  # 重複を含む生の取得件数
+            self._report_progress(f"取得完了: {total_raw_count}件（ユニーク: {len(all_jobs)}件）", 1, 2)
 
             # デバッグログ出力
             if DEBUG_JOB_LOG and all_jobs:

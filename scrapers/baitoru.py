@@ -240,7 +240,7 @@ class BaitoruScraper(BaseScraper):
             logger.error(f"Error extracting card data: {e}")
             return None
 
-    async def search_jobs(self, page: Page, keyword: str, area: str, max_pages: int = 5, seen_job_ids: set = None) -> List[Dict[str, Any]]:
+    async def search_jobs(self, page: Page, keyword: str, area: str, max_pages: int = 5, seen_job_ids: set = None) -> Dict[str, Any]:
         """
         求人検索を実行し、結果を返す
         複数カテゴリがある場合は、各カテゴリで検索を実行
@@ -251,8 +251,12 @@ class BaitoruScraper(BaseScraper):
             area: 地域
             max_pages: 最大ページ数
             seen_job_ids: 既に取得済みのjob_idのセット（重複防止用）
+
+        Returns:
+            Dict with 'jobs' (unique jobs list) and 'raw_count' (count including duplicates)
         """
         all_jobs = []
+        total_raw_count = 0  # 重複を含む生の取得件数
 
         # 重複防止用のセット（外部から渡されない場合は内部で作成）
         if seen_job_ids is None:
@@ -269,26 +273,34 @@ class BaitoruScraper(BaseScraper):
             logger.info(f"Found {len(categories)} categories for '{keyword}': {categories}")
 
         for category in categories:
-            category_jobs = await self._search_category(page, keyword, area, category, max_pages, seen_job_ids)
-            all_jobs.extend(category_jobs)
+            result = await self._search_category(page, keyword, area, category, max_pages, seen_job_ids)
+            all_jobs.extend(result['jobs'])
+            total_raw_count += result['raw_count']
 
             # 複数カテゴリの場合は待機
             if len(categories) > 1 and category != categories[-1]:
                 import random
                 await page.wait_for_timeout(random.randint(2000, 4000))
 
-        return all_jobs
+        return {
+            'jobs': all_jobs,
+            'raw_count': total_raw_count
+        }
 
-    async def _search_category(self, page: Page, keyword: str, area: str, category: str, max_pages: int, seen_job_ids: set = None) -> List[Dict[str, Any]]:
+    async def _search_category(self, page: Page, keyword: str, area: str, category: str, max_pages: int, seen_job_ids: set = None) -> Dict[str, Any]:
         """
         単一カテゴリの検索を実行
 
         Args:
             seen_job_ids: 既に取得済みのjob_idのセット（重複防止用）
+
+        Returns:
+            Dict with 'jobs' (unique jobs list) and 'raw_count' (count including duplicates)
         """
         all_jobs = []
         has_next_page = True
         skipped_duplicate_count = 0
+        raw_count = 0  # 重複を含む生の取得件数（PRカードを除く）
 
         # 重複防止用のセット（外部から渡されない場合は内部で作成）
         if seen_job_ids is None:
@@ -421,6 +433,9 @@ class BaitoruScraper(BaseScraper):
 
                             job_data = await self._extract_card_data(card)
                             if job_data:
+                                # 生の取得件数をカウント（重複チェック前）
+                                raw_count += 1
+
                                 # job_idで重複チェック
                                 job_id = job_data.get('job_id')
                                 if job_id:
@@ -495,7 +510,11 @@ class BaitoruScraper(BaseScraper):
             # ページ間の待機
             await page.wait_for_timeout(500)
 
-        return all_jobs
+        logger.info(f"Category search complete: {len(all_jobs)} unique jobs, {raw_count} raw count (before dedup)")
+        return {
+            'jobs': all_jobs,
+            'raw_count': raw_count
+        }
 
     async def extract_detail_info(self, page: Page, url: str) -> Dict[str, Any]:
         """
@@ -756,7 +775,8 @@ class BaitoruScraper(BaseScraper):
         """
         求人検索と詳細情報取得を実行
         """
-        jobs = await self.search_jobs(page, keyword, area, max_pages)
+        result = await self.search_jobs(page, keyword, area, max_pages)
+        jobs = result['jobs']
 
         if not fetch_details:
             return jobs
