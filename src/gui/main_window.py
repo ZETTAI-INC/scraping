@@ -1095,19 +1095,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, total_combinations)
         self.progress_bar.setValue(0)
-        self.time_label.setVisible(True)
-        self.time_label.setStyleSheet("""
-            QLabel {
-                color: #2e7d32;
-                font-weight: bold;
-                font-size: 12px;
-                padding: 5px;
-                background-color: #e8f5e9;
-                border: 1px solid #c8e6c9;
-                border-radius: 4px;
-            }
-        """)
-        self.time_label.setText("経過時間: 0秒 | 取得: 0件 | 保存: 0件")
+        # time_labelは使用しない（new_count_labelで表示するため）
         self.statusBar.showMessage(f"クローリング中... ({', '.join(source_names)} / {len(keywords)}キーワード x {len(areas)}地域)")
 
         self.crawl_worker = CrawlWorker(self.service, keywords, areas, max_pages, parallel, sources)
@@ -1143,10 +1131,9 @@ class MainWindow(QMainWindow):
     def on_time_update(self, elapsed_time: float, scraped_count: int, saved_count: int):
         """時間計測更新"""
         time_str = self._format_elapsed_time(elapsed_time)
-        count_for_avg = saved_count if saved_count > 0 else scraped_count
 
         # 抽出件数をnew_count_labelにリアルタイム表示
-        self.new_count_label.setText(f"抽出中... {scraped_count} 件取得済み")
+        self.new_count_label.setText(f"抽出中... {scraped_count} 件取得済み（{time_str}）")
         self.new_count_label.setStyleSheet("""
             QLabel {
                 color: #1565c0;
@@ -1158,19 +1145,6 @@ class MainWindow(QMainWindow):
                 border-radius: 6px;
             }
         """)
-
-        # 一件当たりの平均取得時間を計算
-        if count_for_avg > 0:
-            avg_time = elapsed_time / count_for_avg
-            if avg_time < 1:
-                avg_str = f"{avg_time * 1000:.0f}ms"
-            else:
-                avg_str = f"{avg_time:.2f}秒"
-            self.time_label.setText(
-                f"経過時間: {time_str} | 取得: {scraped_count}件 | 保存: {saved_count}件 | 平均: {avg_str}/件"
-            )
-        else:
-            self.time_label.setText(f"経過時間: {time_str} | 取得: 0件 | 保存: 0件")
 
     def on_crawl_finished(self, result: dict):
         """クローリング完了"""
