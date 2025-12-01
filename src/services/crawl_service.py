@@ -600,6 +600,38 @@ class CrawlService:
             seen_job_ids = set()  # 重複防止用のjob_idセット
             total_raw_count = 0  # 重複を含む生の取得件数
 
+            # 並列詳細取得用のヘルパー関数
+            async def fetch_detail_parallel(pages: list, jobs_to_fetch: list, scraper_instance):
+                """2ページを使って並列で詳細取得"""
+                import random
+
+                results = []
+                for i in range(0, len(jobs_to_fetch), 2):
+                    tasks = []
+                    batch = jobs_to_fetch[i:i+2]
+
+                    for idx, (job, page_obj) in enumerate(zip(batch, pages[:len(batch)])):
+                        async def fetch_one(j, pg):
+                            if j.get('page_url'):
+                                try:
+                                    detail_data = await scraper_instance.extract_detail_info(pg, j['page_url'])
+                                    j.update(detail_data)
+                                    await pg.wait_for_timeout(random.randint(300, 600))
+                                except Exception as e:
+                                    logger.warning(f"Failed to fetch detail for {j['page_url']}: {e}")
+                            return j
+                        tasks.append(fetch_one(job, page_obj))
+
+                    if tasks:
+                        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                        for r in batch_results:
+                            if isinstance(r, dict):
+                                results.append(r)
+                            elif isinstance(r, Exception):
+                                logger.error(f"Detail fetch error: {r}")
+
+                return results
+
             async with async_playwright() as p:
                 # Stealth設定を取得
                 launch_args = StealthConfig.get_launch_args()
@@ -608,9 +640,23 @@ class CrawlService:
                 browser = await p.chromium.launch(**launch_args)
 
                 try:
-                    context = await create_stealth_context(browser)
+                    # 画像・動画をブロックして高速化
+                    context = await create_stealth_context(browser, block_resources=True)
+
+                    # メインページ（一覧取得用）
                     page = await context.new_page()
                     await StealthConfig.apply_stealth_scripts(page)
+                    if hasattr(context, '_block_resources') and context._block_resources:
+                        await context._setup_route_blocking(page)
+
+                    # 並列用ページ2つ（詳細取得用）
+                    detail_pages = []
+                    for _ in range(2):
+                        dp = await context.new_page()
+                        await StealthConfig.apply_stealth_scripts(dp)
+                        if hasattr(context, '_block_resources') and context._block_resources:
+                            await context._setup_route_blocking(dp)
+                        detail_pages.append(dp)
 
                     # キーワード×地域の組み合わせでスクレイピング
                     total_combinations = len(keywords) * len(areas)
@@ -643,53 +689,48 @@ class CrawlService:
                             enable_dispatch_filter = filters.get('enable_dispatch_keyword', True) if filters else True
                             dispatch_keywords = ['派遣', '派遣社員', '無期雇用派遣', '登録型派遣']
 
-                            # 各求人の詳細情報を取得
+                            # 派遣フィルタを適用して詳細取得対象を絞り込み
+                            jobs_to_fetch = []
                             skipped_dispatch_count = 0
-                            for idx, job in enumerate(jobs):
+                            for job in jobs:
                                 job['keyword'] = keyword
                                 job['area'] = area
 
-                                # 派遣フィルタが有効な場合、雇用形態に派遣を含む案件はスキップ
-                                # ※カード段階ではemployment_typeのみチェック（title等は詳細取得後にフィルタ）
                                 if enable_dispatch_filter:
                                     employment_type = job.get('employment_type', '') or ''
-
                                     should_skip = False
                                     if employment_type:
                                         for dispatch_kw in dispatch_keywords:
                                             if dispatch_kw in employment_type:
                                                 should_skip = True
                                                 break
-
                                     if should_skip:
                                         skipped_dispatch_count += 1
                                         logger.debug(f"Skipped dispatch job: {job.get('title', 'N/A')} ({employment_type})")
                                         continue
 
-                                if job.get('page_url'):
-                                    try:
-                                        self._report_progress(
-                                            f"[バイトル] 詳細取得中 ({idx+1}/{len(jobs)})",
-                                            current_idx,
-                                            total_combinations
-                                        )
-                                        detail_data = await scraper.extract_detail_info(page, job['page_url'])
-                                        job.update(detail_data)
-                                        # サーバー負荷軽減のため待機
-                                        import random
-                                        await page.wait_for_timeout(random.randint(800, 1500))
-                                    except Exception as e:
-                                        logger.warning(f"Failed to fetch detail for {job['page_url']}: {e}")
-
-                                all_jobs.append(job)
+                                jobs_to_fetch.append(job)
 
                             if skipped_dispatch_count > 0:
                                 logger.info(f"Skipped {skipped_dispatch_count} dispatch jobs before detail fetch")
 
+                            # 並列で詳細取得（2ページ同時）
+                            if jobs_to_fetch:
+                                self._report_progress(
+                                    f"[バイトル] 詳細取得中（並列2）: {len(jobs_to_fetch)}件",
+                                    current_idx,
+                                    total_combinations
+                                )
+                                fetched_jobs = await fetch_detail_parallel(detail_pages, jobs_to_fetch, scraper)
+                                all_jobs.extend(fetched_jobs)
+
                             # 待機（ボット検出対策）
                             import random
-                            await page.wait_for_timeout(random.randint(2000, 4000))
+                            await page.wait_for_timeout(random.randint(1000, 2000))
 
+                    # ページをクローズ
+                    for dp in detail_pages:
+                        await dp.close()
                     await context.close()
 
                 except Exception as e:
