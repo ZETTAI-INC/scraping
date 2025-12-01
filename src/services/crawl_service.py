@@ -809,16 +809,33 @@ class CrawlService:
     def _prepare_baitoru_job_record(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """バイトル用のテーブル表示データ整形"""
         return {
+            "source_display_name": "バイトル",
+            "job_id": job.get("job_id", ""),
             "company_name": job.get("company_name", ""),
-            "job_title": job.get("title", ""),
-            "work_location": job.get("location", ""),
+            "job_title": job.get("title", job.get("job_title", "")),
+            "work_location": job.get("location", job.get("work_location", "")),
+            "address": job.get("address", ""),
+            "address_pref": job.get("address", ""),
+            "postal_code": job.get("postal_code", ""),
             "salary": job.get("salary", ""),
             "employment_type": job.get("employment_type", ""),
             "page_url": job.get("page_url", ""),
             "crawled_at": job.get("crawled_at"),
             "job_type": job.get("job_type", ""),
             "working_hours": job.get("working_hours", ""),
+            "holidays": job.get("holidays", ""),
             "tags": job.get("tags", ""),
+            # 電話番号
+            "phone": job.get("phone", ""),
+            "phone_number": job.get("phone", ""),
+            "phone_number_normalized": job.get("phone_number_normalized", job.get("phone", "")),
+            # その他詳細情報
+            "business_content": job.get("business_content", ""),
+            "business_description": job.get("business_content", ""),
+            "job_description": job.get("job_description", ""),
+            "qualifications": job.get("qualifications", ""),
+            "requirements": job.get("qualifications", ""),
+            "published_date": job.get("published_date", ""),
         }
 
     def _save_crawl_log_baitoru(self, result: Dict[str, Any]):
