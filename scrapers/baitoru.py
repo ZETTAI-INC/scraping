@@ -607,10 +607,14 @@ class BaitoruScraper(BaseScraper):
                     "a[href^='tel:']",
                     "td:has-text('TEL') + td",
                     "th:has-text('電話') + td",
+                    "dt:has-text('電話') + dd",
+                    "dt:has-text('TEL') + dd",
                     "[class*='tel']",
                     "[class*='phone']",
                     ".telNumber",
                     "[class*='telNum']",
+                    "[class*='Tel']",
+                    "[class*='Phone']",
                 ]
 
                 phone_found = False
@@ -620,27 +624,30 @@ class BaitoruScraper(BaseScraper):
                         for tel_elem in tel_elems:
                             tel_text = await tel_elem.inner_text()
                             # tel:リンクの場合はhrefから取得
-                            if not tel_text:
-                                tel_text = await tel_elem.get_attribute("href")
-                                if tel_text:
-                                    tel_text = tel_text.replace("tel:", "")
+                            if not tel_text or len(tel_text.strip()) < 9:
+                                href = await tel_elem.get_attribute("href")
+                                if href and href.startswith("tel:"):
+                                    tel_text = href.replace("tel:", "")
                             if tel_text:
                                 # 数字のみ抽出
                                 phone_raw = re.sub(r"[^\d]", "", tel_text)
-                                # 有効な電話番号かチェック（0120除外、マスク番号除外）
-                                if len(phone_raw) >= 9 and not phone_raw.startswith("0500000") and not phone_raw.startswith("0120"):
+                                # 有効な電話番号かチェック（除外パターン）
+                                if 9 <= len(phone_raw) <= 11:
+                                    if phone_raw.startswith("0120") or phone_raw.startswith("0500000") or phone_raw.startswith("50"):
+                                        continue
                                     detail_data["phone"] = phone_raw
                                     detail_data["phone_number_normalized"] = phone_raw
-                                    logger.debug(f"Found phone number: {phone_raw}")
+                                    logger.info(f"Found phone from selector {sel}: {phone_raw}")
                                     phone_found = True
                                     break
                         if phone_found:
                             break
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Error with selector {sel}: {e}")
                         continue
 
                 if not phone_found:
-                    logger.debug("No valid phone number found on this page")
+                    logger.debug("No phone found via selectors, will try regex extraction")
 
             except Exception as e:
                 logger.debug(f"Error getting phone number: {e}")
@@ -676,23 +683,51 @@ class BaitoruScraper(BaseScraper):
                             detail_data["address"] = addr_match3.group(1) + addr_match3.group(2).strip()
 
             # 電話番号の抽出（複数パターン対応）
-            phone_patterns = [
-                r"TEL[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # TEL:形式
-                r"電話番号[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # 電話番号:形式
-                r"連絡先[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # 連絡先:形式
-                r"tel[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # 小文字tel
-                r"(?:問[い合わせ]*|お問合せ)[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # お問い合わせ
-            ]
+            # セレクタから既に取得できている場合はスキップ
+            if not detail_data.get("phone"):
+                phone_patterns = [
+                    r"TEL[：:\s]*[^\d]*(\d{2,4}[-ー\s]?\d{2,4}[-ー\s]?\d{3,4})",  # TEL:形式
+                    r"電話番号[：:\s]*[^\d]*(\d{2,4}[-ー\s]?\d{2,4}[-ー\s]?\d{3,4})",  # 電話番号:形式
+                    r"連絡先[：:\s]*[^\d]*(\d{2,4}[-ー\s]?\d{2,4}[-ー\s]?\d{3,4})",  # 連絡先:形式
+                    r"tel[：:\s]*[^\d]*(\d{2,4}[-ー\s]?\d{2,4}[-ー\s]?\d{3,4})",  # 小文字tel
+                    r"(?:問[い合わせ]*|お問合せ)[：:\s]*[^\d]*(\d{2,4}[-ー\s]?\d{2,4}[-ー\s]?\d{3,4})",  # お問い合わせ
+                    r"(?:電話|TEL|Tel)[^\d]{0,10}(\d{2,4}[-ー\s]?\d{2,4}[-ー\s]?\d{3,4})",  # より緩いパターン
+                ]
 
-            for pattern in phone_patterns:
-                phone_match = re.search(pattern, body_text, re.IGNORECASE)
-                if phone_match:
-                    phone_raw = phone_match.group(1).replace("-", "").replace("ー", "")
-                    # 0120やマスクされた番号（050-0000-0000）は除外
-                    if not phone_raw.startswith("0500000") and len(phone_raw) >= 9:
-                        detail_data["phone"] = phone_raw
-                        # 正規化された電話番号も保存
-                        detail_data["phone_number_normalized"] = phone_raw
+                for pattern in phone_patterns:
+                    phone_match = re.search(pattern, body_text, re.IGNORECASE)
+                    if phone_match:
+                        phone_raw = re.sub(r"[-ー\s]", "", phone_match.group(1))
+                        # 0120やマスクされた番号（050-0000-0000）、50始まりは除外
+                        if len(phone_raw) >= 9 and not phone_raw.startswith("0120") and not phone_raw.startswith("0500000") and not phone_raw.startswith("50"):
+                            detail_data["phone"] = phone_raw
+                            detail_data["phone_number_normalized"] = phone_raw
+                            logger.info(f"Found phone from body text: {phone_raw}")
+                            break
+
+            # それでも見つからない場合、一般的な電話番号パターンで検索
+            if not detail_data.get("phone"):
+                # 10桁または11桁の数字の連続を探す
+                general_phone_patterns = [
+                    r"0\d{1,4}[-ー\s]?\d{1,4}[-ー\s]?\d{3,4}",  # 一般的な電話番号形式
+                    r"0[3-9]\d{8,9}",  # 0で始まる10-11桁
+                ]
+                for pattern in general_phone_patterns:
+                    matches = re.findall(pattern, body_text)
+                    for match in matches:
+                        phone_raw = re.sub(r"[-ー\s]", "", match)
+                        # 有効な電話番号かチェック
+                        if 9 <= len(phone_raw) <= 11:
+                            # 除外パターンをチェック
+                            if phone_raw.startswith("0120") or phone_raw.startswith("0500000") or phone_raw.startswith("50"):
+                                continue
+                            # 携帯電話または固定電話のパターンをチェック
+                            if phone_raw.startswith(("03", "06", "0", "070", "080", "090")):
+                                detail_data["phone"] = phone_raw
+                                detail_data["phone_number_normalized"] = phone_raw
+                                logger.info(f"Found phone from general pattern: {phone_raw}")
+                                break
+                    if detail_data.get("phone"):
                         break
 
             # 会社名
