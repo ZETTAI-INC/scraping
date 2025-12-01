@@ -164,10 +164,11 @@ class BaitoruScraper(BaseScraper):
                         href = f"https://www.baitoru.com{href}"
                     data["page_url"] = href
 
-                    # 求人IDを抽出 (例: job151221507)
-                    match = re.search(r"job(\d+)", href)
+                    # 求人IDを抽出 (例: job145542259)
+                    match = re.search(r"(job\d+)", href)
                     if match:
-                        data["job_number"] = match.group(1)
+                        data["job_id"] = match.group(1)  # job145542259 形式
+                        data["job_number"] = match.group(1).replace("job", "")  # 数字のみも保存
 
             # タイトル
             title_elem = await card.query_selector(".pt02b .ul01 .li01 h3 a span")
