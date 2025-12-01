@@ -268,45 +268,60 @@
       "business_content": "body"
     },
     "area_codes": {
-      "東京": {
-        "region": "kanto",
-        "prefecture": "tokyo",
+      "北海道": {
+        "region": "hokkaido",
+        "prefecture": "hokkaido",
         "area": ""
       },
-      "東京23区": {
-        "region": "kanto",
-        "prefecture": "tokyo",
-        "area": "23ku"
+      "札幌": {
+        "region": "hokkaido",
+        "prefecture": "hokkaido",
+        "area": "sapporoshi"
       },
-      "新宿": {
-        "region": "kanto",
-        "prefecture": "tokyo",
-        "area": "23ku/shinjukuku"
-      },
-      "渋谷": {
-        "region": "kanto",
-        "prefecture": "tokyo",
-        "area": "23ku/shibuyaku"
-      },
-      "大阪": {
-        "region": "kansai",
-        "prefecture": "osaka",
+      "青森": {
+        "region": "tohoku",
+        "prefecture": "aomori",
         "area": ""
       },
-      "大阪市": {
-        "region": "kansai",
-        "prefecture": "osaka",
-        "area": "osakashi"
-      },
-      "神奈川": {
-        "region": "kanto",
-        "prefecture": "kanagawa",
+      "岩手": {
+        "region": "tohoku",
+        "prefecture": "iwate",
         "area": ""
       },
-      "横浜": {
+      "宮城": {
+        "region": "tohoku",
+        "prefecture": "miyagi",
+        "area": ""
+      },
+      "秋田": {
+        "region": "tohoku",
+        "prefecture": "akita",
+        "area": ""
+      },
+      "山形": {
+        "region": "tohoku",
+        "prefecture": "yamagata",
+        "area": ""
+      },
+      "福島": {
+        "region": "tohoku",
+        "prefecture": "fukushima",
+        "area": ""
+      },
+      "茨城": {
         "region": "kanto",
-        "prefecture": "kanagawa",
-        "area": "yokohamashi"
+        "prefecture": "ibaraki",
+        "area": ""
+      },
+      "栃木": {
+        "region": "kanto",
+        "prefecture": "tochigi",
+        "area": ""
+      },
+      "群馬": {
+        "region": "kanto",
+        "prefecture": "gunma",
+        "area": ""
       },
       "埼玉": {
         "region": "kanto",
@@ -328,6 +343,76 @@
         "prefecture": "chiba",
         "area": "chibashi"
       },
+      "東京": {
+        "region": "kanto",
+        "prefecture": "tokyo",
+        "area": ""
+      },
+      "東京23区": {
+        "region": "kanto",
+        "prefecture": "tokyo",
+        "area": "23ku"
+      },
+      "新宿": {
+        "region": "kanto",
+        "prefecture": "tokyo",
+        "area": "23ku/shinjukuku"
+      },
+      "渋谷": {
+        "region": "kanto",
+        "prefecture": "tokyo",
+        "area": "23ku/shibuyaku"
+      },
+      "神奈川": {
+        "region": "kanto",
+        "prefecture": "kanagawa",
+        "area": ""
+      },
+      "横浜": {
+        "region": "kanto",
+        "prefecture": "kanagawa",
+        "area": "yokohamashi"
+      },
+      "新潟": {
+        "region": "koshinetsu",
+        "prefecture": "niigata",
+        "area": ""
+      },
+      "富山": {
+        "region": "hokuriku",
+        "prefecture": "toyama",
+        "area": ""
+      },
+      "石川": {
+        "region": "hokuriku",
+        "prefecture": "ishikawa",
+        "area": ""
+      },
+      "福井": {
+        "region": "hokuriku",
+        "prefecture": "fukui",
+        "area": ""
+      },
+      "山梨": {
+        "region": "koshinetsu",
+        "prefecture": "yamanashi",
+        "area": ""
+      },
+      "長野": {
+        "region": "koshinetsu",
+        "prefecture": "nagano",
+        "area": ""
+      },
+      "岐阜": {
+        "region": "tokai",
+        "prefecture": "gifu",
+        "area": ""
+      },
+      "静岡": {
+        "region": "tokai",
+        "prefecture": "shizuoka",
+        "area": ""
+      },
       "愛知": {
         "region": "tokai",
         "prefecture": "aichi",
@@ -337,6 +422,91 @@
         "region": "tokai",
         "prefecture": "aichi",
         "area": "nagoyashi"
+      },
+      "三重": {
+        "region": "tokai",
+        "prefecture": "mie",
+        "area": ""
+      },
+      "滋賀": {
+        "region": "kansai",
+        "prefecture": "shiga",
+        "area": ""
+      },
+      "京都": {
+        "region": "kansai",
+        "prefecture": "kyoto",
+        "area": ""
+      },
+      "大阪": {
+        "region": "kansai",
+        "prefecture": "osaka",
+        "area": ""
+      },
+      "大阪市": {
+        "region": "kansai",
+        "prefecture": "osaka",
+        "area": "osakashi"
+      },
+      "兵庫": {
+        "region": "kansai",
+        "prefecture": "hyogo",
+        "area": ""
+      },
+      "奈良": {
+        "region": "kansai",
+        "prefecture": "nara",
+        "area": ""
+      },
+      "和歌山": {
+        "region": "kansai",
+        "prefecture": "wakayama",
+        "area": ""
+      },
+      "鳥取": {
+        "region": "chugoku",
+        "prefecture": "tottori",
+        "area": ""
+      },
+      "島根": {
+        "region": "chugoku",
+        "prefecture": "shimane",
+        "area": ""
+      },
+      "岡山": {
+        "region": "chugoku",
+        "prefecture": "okayama",
+        "area": ""
+      },
+      "広島": {
+        "region": "chugoku",
+        "prefecture": "hiroshima",
+        "area": ""
+      },
+      "山口": {
+        "region": "chugoku",
+        "prefecture": "yamaguchi",
+        "area": ""
+      },
+      "徳島": {
+        "region": "shikoku",
+        "prefecture": "tokushima",
+        "area": ""
+      },
+      "香川": {
+        "region": "shikoku",
+        "prefecture": "kagawa",
+        "area": ""
+      },
+      "愛媛": {
+        "region": "shikoku",
+        "prefecture": "ehime",
+        "area": ""
+      },
+      "高知": {
+        "region": "shikoku",
+        "prefecture": "kochi",
+        "area": ""
       },
       "福岡": {
         "region": "kyushu",
@@ -348,15 +518,40 @@
         "prefecture": "fukuoka",
         "area": "fukuokashi"
       },
-      "北海道": {
-        "region": "hokkaido",
-        "prefecture": "hokkaido",
+      "佐賀": {
+        "region": "kyushu",
+        "prefecture": "saga",
         "area": ""
       },
-      "札幌": {
-        "region": "hokkaido",
-        "prefecture": "hokkaido",
-        "area": "sapporoshi"
+      "長崎": {
+        "region": "kyushu",
+        "prefecture": "nagasaki",
+        "area": ""
+      },
+      "熊本": {
+        "region": "kyushu",
+        "prefecture": "kumamoto",
+        "area": ""
+      },
+      "大分": {
+        "region": "kyushu",
+        "prefecture": "oita",
+        "area": ""
+      },
+      "宮崎": {
+        "region": "kyushu",
+        "prefecture": "miyazaki",
+        "area": ""
+      },
+      "鹿児島": {
+        "region": "kyushu",
+        "prefecture": "kagoshima",
+        "area": ""
+      },
+      "沖縄": {
+        "region": "kyushu",
+        "prefecture": "okinawa",
+        "area": ""
       }
     },
     "pagination": {
