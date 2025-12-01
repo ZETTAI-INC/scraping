@@ -259,14 +259,38 @@ class JobFilter:
             if keyword in combined_text:
                 return f"除外キーワード（{keyword}）"
 
-        # Step 3.5: 雇用形態・タイトル・職種に「派遣」が含まれる場合も除外
-        employment_type = job.get('employment_type', '')
-        title = job.get('title', job.get('job_title', ''))
-        job_type = job.get('job_type', '')
+        # Step 3.5: 雇用形態・タイトル・職種・その他フィールドに「派遣」が含まれる場合も除外
+        # 複数のフィールド名をチェック（サイトによって異なる可能性があるため）
+        employment_type = job.get('employment_type', '') or job.get('雇用形態', '') or ''
+        title = job.get('title', '') or job.get('job_title', '') or ''
+        job_type = job.get('job_type', '') or job.get('職種', '') or ''
+        working_style = job.get('working_style', '') or job.get('勤務形態', '') or ''
+        job_description = job.get('job_description', '') or job.get('仕事内容', '') or ''
 
-        for field_name, field_value in [('雇用形態', employment_type), ('タイトル', title), ('職種', job_type)]:
-            if field_value and '派遣' in field_value:
-                return f"{field_name}に派遣（{field_value}）"
+        # 派遣関連のキーワード
+        dispatch_keywords = ['派遣', '派遣社員', '無期雇用派遣', '登録型派遣']
+
+        fields_to_check = [
+            ('雇用形態', employment_type),
+            ('タイトル', title),
+            ('職種', job_type),
+            ('勤務形態', working_style),
+        ]
+
+        for field_name, field_value in fields_to_check:
+            if field_value:
+                for dispatch_kw in dispatch_keywords:
+                    if dispatch_kw in field_value:
+                        logger.debug(f"Dispatch filter matched: {field_name}={field_value}")
+                        return f"{field_name}に派遣（{field_value}）"
+
+        # 仕事内容の冒頭に「派遣」が含まれる場合も除外（本文中の「派遣」は除外しない）
+        if job_description:
+            desc_start = job_description[:50]  # 冒頭50文字をチェック
+            for dispatch_kw in dispatch_keywords:
+                if dispatch_kw in desc_start:
+                    logger.debug(f"Dispatch filter matched in job_description start: {desc_start}")
+                    return f"仕事内容冒頭に派遣（{desc_start[:30]}...）"
 
         # Step 4: 業界フィルタ
         for industry in self.exclude_industries:

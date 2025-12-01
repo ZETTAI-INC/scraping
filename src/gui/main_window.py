@@ -1262,6 +1262,36 @@ class CustomizableJobFilter(JobFilter):
                 if keyword in combined_text:
                     return f"除外キーワード（{keyword}）"
 
+            # 雇用形態・タイトル・職種・その他フィールドに「派遣」が含まれる場合も除外
+            employment_type = job.get('employment_type', '') or job.get('雇用形態', '') or ''
+            title = job.get('title', '') or job.get('job_title', '') or ''
+            job_type = job.get('job_type', '') or job.get('職種', '') or ''
+            working_style = job.get('working_style', '') or job.get('勤務形態', '') or ''
+            job_description = job.get('job_description', '') or job.get('仕事内容', '') or ''
+
+            # 派遣関連のキーワード
+            dispatch_keywords = ['派遣', '派遣社員', '無期雇用派遣', '登録型派遣']
+
+            fields_to_check = [
+                ('雇用形態', employment_type),
+                ('タイトル', title),
+                ('職種', job_type),
+                ('勤務形態', working_style),
+            ]
+
+            for field_name, field_value in fields_to_check:
+                if field_value:
+                    for dispatch_kw in dispatch_keywords:
+                        if dispatch_kw in field_value:
+                            return f"{field_name}に派遣（{field_value}）"
+
+            # 仕事内容の冒頭に「派遣」が含まれる場合も除外
+            if job_description:
+                desc_start = job_description[:50]
+                for dispatch_kw in dispatch_keywords:
+                    if dispatch_kw in desc_start:
+                        return f"仕事内容冒頭に派遣"
+
         # 業界フィルタ
         if self.enable_industry:
             for industry in self.exclude_industries:

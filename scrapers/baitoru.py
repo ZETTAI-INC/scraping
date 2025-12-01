@@ -272,8 +272,13 @@ class BaitoruScraper(BaseScraper):
         単一カテゴリの検索を実行
         """
         all_jobs = []
+        has_next_page = True
 
         for page_num in range(1, max_pages + 1):
+            if not has_next_page:
+                logger.info(f"No more pages available, stopping at page {page_num - 1}")
+                break
+
             url = self.generate_search_url(keyword, area, page_num, category=category)
             logger.info(f"Fetching page {page_num}: {url}")
 
@@ -288,30 +293,48 @@ class BaitoruScraper(BaseScraper):
 
                     if response and response.status == 404:
                         logger.warning(f"Page not found: {url}")
+                        has_next_page = False
                         break
 
                     # ページ読み込み待機
                     await page.wait_for_timeout(2000)
 
+                    # 「該当する求人がありません」をチェック
+                    no_results = await page.evaluate("""() => {
+                        const body = document.body.innerText;
+                        return body.includes('該当する求人がありません') ||
+                               body.includes('条件に合う求人がありませんでした') ||
+                               body.includes('お探しの求人は見つかりませんでした') ||
+                               body.includes('検索結果はありません');
+                    }""")
+
+                    if no_results:
+                        logger.info(f"No results page detected on page {page_num}")
+                        has_next_page = False
+                        success = True
+                        break
+
                     card_selector = self.selectors.get("job_cards", "article.list-jobListDetail")
 
-                    # カードが描画されるまで待機
+                    # カードが描画されるまで待機（リトライ回数を減らす）
                     selector_ready = False
-                    for sel_attempt in range(4):
+                    for sel_attempt in range(2):
                         try:
-                            await page.wait_for_selector(card_selector, timeout=3000 + 500 * sel_attempt)
+                            await page.wait_for_selector(card_selector, timeout=5000)
                             selector_ready = True
                             break
                         except PlaywrightTimeoutError:
                             logger.warning(
-                                f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/4)"
+                                f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/2)"
                             )
-                            await page.wait_for_timeout(600 + 200 * sel_attempt)
+                            await page.wait_for_timeout(1000)
 
                     if not selector_ready:
-                        logger.warning(f"Job cards selector not ready on page {page_num}")
-                        if attempt == 0:
-                            continue
+                        # セレクタが見つからない場合、ページが存在しない可能性が高い
+                        logger.info(f"Job cards not found on page {page_num}, assuming no more pages")
+                        has_next_page = False
+                        success = True
+                        break
 
                     # 求人カードを取得（ページネーションより上のもののみ）
                     # ページネーション要素より前のカードだけを取得するJavaScript
@@ -351,14 +374,10 @@ class BaitoruScraper(BaseScraper):
                         job_cards = all_cards
 
                     if len(job_cards) == 0:
-                        logger.warning(f"No job cards found on page {page_num}")
-                        if attempt == 0:
-                            await page.wait_for_timeout(1200)
-                            continue
-                        else:
-                            logger.info(f"No jobs on page {page_num} after retries")
-                            success = True
-                            break
+                        logger.info(f"No job cards found on page {page_num}, assuming end of results")
+                        has_next_page = False
+                        success = True
+                        break
 
                     logger.info(f"Found {len(job_cards)} jobs on page {page_num} (filtered above pagination)")
 
@@ -384,6 +403,44 @@ class BaitoruScraper(BaseScraper):
                     if pr_count > 0:
                         logger.info(f"Skipped {pr_count} PR card(s)")
 
+                    # 次のページが存在するかチェック
+                    has_next_page = await page.evaluate("""(currentPageNum) => {
+                        // 「次へ」テキストを含むリンクがあるか確認
+                        const allLinks = document.querySelectorAll('a');
+                        for (const link of allLinks) {
+                            if (link.textContent.trim() === '次へ' || link.textContent.includes('次のページ')) {
+                                return true;
+                            }
+                        }
+
+                        // ページ番号リンクで現在より大きいページがあるか確認
+                        // バイトルのページネーション: div.pager内のaタグ
+                        const pageLinks = document.querySelectorAll('.pager a, .list-pager a, nav a, [class*="pager"] a, [class*="pagination"] a');
+                        for (const link of pageLinks) {
+                            const text = link.textContent.trim();
+                            const pageNum = parseInt(text, 10);
+                            if (!isNaN(pageNum) && pageNum > currentPageNum) {
+                                return true;
+                            }
+                        }
+
+                        // 最後のチェック: ページ番号テキストを含む要素全体から検索
+                        const bodyText = document.body.innerText;
+                        const match = bodyText.match(/(\d+)件中/);
+                        if (match) {
+                            // 結果件数が20件以上ある場合は次ページがある可能性
+                            const totalCount = parseInt(match[1], 10);
+                            if (totalCount > currentPageNum * 20) {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }""", page_num)
+
+                    if not has_next_page:
+                        logger.info(f"No next page link found, page {page_num} is the last page")
+
                     success = True
                     break
 
@@ -398,7 +455,7 @@ class BaitoruScraper(BaseScraper):
             if not success:
                 break
 
-            # ページネーションの確認
+            # ページ間の待機
             await page.wait_for_timeout(500)
 
         return all_jobs
@@ -418,6 +475,7 @@ class BaitoruScraper(BaseScraper):
         - 休日休暇
         - 応募資格
         - 掲載日
+        - 雇用形態
         """
         detail_data = {}
 
@@ -425,28 +483,119 @@ class BaitoruScraper(BaseScraper):
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(2000)
 
+            # セレクタから各種情報を取得
+            try:
+                # 雇用形態
+                emp_elem = await page.query_selector(".job-type, .employment-type, [class*='employment'], [class*='jobtype']")
+                if emp_elem:
+                    emp_text = await emp_elem.inner_text()
+                    if emp_text:
+                        detail_data["employment_type"] = emp_text.strip()
+            except Exception:
+                pass
+
+            # 住所をセレクタから取得
+            try:
+                addr_selectors = [
+                    "td:has-text('住所') + td",
+                    "th:has-text('住所') + td",
+                    "[class*='address']",
+                    "[class*='location']",
+                    "dd:has(dt:has-text('勤務地'))",
+                ]
+                for sel in addr_selectors:
+                    try:
+                        addr_elem = await page.query_selector(sel)
+                        if addr_elem:
+                            addr_text = await addr_elem.inner_text()
+                            if addr_text and len(addr_text) > 3:
+                                detail_data["address"] = addr_text.strip()[:200]
+                                break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            # 電話番号をセレクタから取得
+            try:
+                tel_selectors = [
+                    "td:has-text('TEL') + td",
+                    "th:has-text('電話') + td",
+                    "[class*='tel']",
+                    "[class*='phone']",
+                    "a[href^='tel:']",
+                ]
+                for sel in tel_selectors:
+                    try:
+                        tel_elem = await page.query_selector(sel)
+                        if tel_elem:
+                            tel_text = await tel_elem.inner_text()
+                            # tel:リンクの場合はhrefから取得
+                            if not tel_text:
+                                tel_text = await tel_elem.get_attribute("href")
+                                if tel_text:
+                                    tel_text = tel_text.replace("tel:", "")
+                            if tel_text:
+                                # 数字のみ抽出
+                                phone_raw = re.sub(r"[^\d]", "", tel_text)
+                                if len(phone_raw) >= 9 and not phone_raw.startswith("0500000"):
+                                    detail_data["phone"] = phone_raw
+                                    detail_data["phone_number_normalized"] = phone_raw
+                                    break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
             body_text = await page.inner_text("body")
 
-            # 郵便番号と住所の抽出
-            postal_match = re.search(r"〒?(\d{3})-?(\d{4})\s*(東京都|大阪府|北海道|京都府|.{2,3}県)(.+?)(?=\n|交通|地図|※|アクセス)", body_text)
+            # 雇用形態をテキストから抽出（セレクタで取得できなかった場合）
+            if not detail_data.get("employment_type"):
+                emp_match = re.search(r"(雇用形態|勤務形態)[：:\s]*[\n\r]*(.+?)(?=\n|$)", body_text)
+                if emp_match:
+                    detail_data["employment_type"] = emp_match.group(2).strip()[:50]
+
+            # 住所の抽出（複数パターン対応）
+            # パターン1: 郵便番号付き
+            postal_match = re.search(r"〒?(\d{3})-?(\d{4})\s*(東京都|大阪府|北海道|京都府|.{2,3}県)(.+?)(?=\n|交通|地図|※|アクセス|TEL|電話)", body_text)
             if postal_match:
-                detail_data["postal_code"] = postal_match.group(1) + postal_match.group(2)
+                detail_data["postal_code"] = postal_match.group(1) + "-" + postal_match.group(2)
                 detail_data["address"] = postal_match.group(3) + postal_match.group(4).strip()
             else:
-                # 別のパターン：郵便番号なしで都道府県から始まる
-                addr_match = re.search(r"勤務地\s*[\n\r]*(東京都|大阪府|北海道|京都府|.{2,3}県)(.{5,80}?)(?=\n|交通|地図|※|アクセス)", body_text)
+                # パターン2: 「住所」ラベルの後
+                addr_match = re.search(r"住所[：:\s]*[\n\r]*(東京都|大阪府|北海道|京都府|.{2,3}県)(.{0,100}?)(?=\n|交通|地図|※|アクセス|最寄|$)", body_text)
                 if addr_match:
                     detail_data["address"] = addr_match.group(1) + addr_match.group(2).strip()
+                else:
+                    # パターン3: 「勤務地」の後に都道府県
+                    addr_match2 = re.search(r"勤務地[：:\s]*[\n\r]*(東京都|大阪府|北海道|京都府|.{2,3}県)(.{0,100}?)(?=\n|交通|地図|※|アクセス|最寄|$)", body_text)
+                    if addr_match2:
+                        detail_data["address"] = addr_match2.group(1) + addr_match2.group(2).strip()
+                    else:
+                        # パターン4: 所在地
+                        addr_match3 = re.search(r"所在地[：:\s]*[\n\r]*(東京都|大阪府|北海道|京都府|.{2,3}県)(.{0,100}?)(?=\n|$)", body_text)
+                        if addr_match3:
+                            detail_data["address"] = addr_match3.group(1) + addr_match3.group(2).strip()
 
-            # 電話番号の抽出（代表電話番号）
-            phone_match = re.search(r"電話番号[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})", body_text)
-            if phone_match:
-                detail_data["phone"] = phone_match.group(1).replace("-", "").replace("ー", "")
-            else:
-                # 別のパターン：連絡先
-                phone_match2 = re.search(r"連絡先[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})", body_text)
-                if phone_match2:
-                    detail_data["phone"] = phone_match2.group(1).replace("-", "").replace("ー", "")
+            # 電話番号の抽出（複数パターン対応）
+            phone_patterns = [
+                r"TEL[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # TEL:形式
+                r"電話番号[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # 電話番号:形式
+                r"連絡先[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # 連絡先:形式
+                r"tel[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # 小文字tel
+                r"(?:問[い合わせ]*|お問合せ)[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})",  # お問い合わせ
+            ]
+
+            for pattern in phone_patterns:
+                phone_match = re.search(pattern, body_text, re.IGNORECASE)
+                if phone_match:
+                    phone_raw = phone_match.group(1).replace("-", "").replace("ー", "")
+                    # 0120やマスクされた番号（050-0000-0000）は除外
+                    if not phone_raw.startswith("0500000") and len(phone_raw) >= 9:
+                        detail_data["phone"] = phone_raw
+                        # 正規化された電話番号も保存
+                        detail_data["phone_number_normalized"] = phone_raw
+                        break
 
             # 会社名
             company_match = re.search(r"会社名\s*[\n\r]*(.+?)(?=\n|$)", body_text)

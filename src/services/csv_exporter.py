@@ -115,17 +115,32 @@ class CSVExporter:
         """求人データを出力用に加工"""
         processed = job.copy()
 
-        # 電話番号のフォーマット（phone または phone_number から取得）
-        phone = job.get('phone_number_normalized', job.get('phone_number', job.get('phone', '')))
+        # 電話番号のフォーマット（複数フィールドから取得）
+        phone = (job.get('phone_number_normalized') or
+                 job.get('phone_number') or
+                 job.get('phone') or '')
         processed['phone_number_formatted'] = self._format_phone(phone)
 
-        # 住所の処理（address フィールドがある場合、address_pref に設定）
-        if job.get('address') and not job.get('address_pref'):
-            processed['address_pref'] = job.get('address', '')
+        # 住所の処理（複数フィールドから取得）
+        if not job.get('address_pref'):
+            # 優先順位: address > location > work_location
+            address = (job.get('address') or
+                      job.get('location') or
+                      job.get('work_location') or '')
+            if address:
+                processed['address_pref'] = address
+
+        # 勤務地の処理
+        if not job.get('work_location'):
+            processed['work_location'] = job.get('location', '')
 
         # 事業内容のマッピング
         if job.get('business_content') and not job.get('business_description'):
             processed['business_description'] = job.get('business_content', '')
+
+        # 職種のマッピング
+        if not job.get('job_title'):
+            processed['job_title'] = job.get('title', job.get('job_type', ''))
 
         # 日時のフォーマット
         crawled_at = job.get('crawled_at')

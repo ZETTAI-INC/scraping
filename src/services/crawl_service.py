@@ -633,10 +633,36 @@ class CrawlService:
 
                             logger.info(f"Found {len(jobs)} jobs for keyword: {keyword} in {area}")
 
+                            # 派遣フィルタが有効かチェック
+                            enable_dispatch_filter = filters.get('enable_dispatch_keyword', True) if filters else True
+                            dispatch_keywords = ['派遣', '派遣社員', '無期雇用派遣', '登録型派遣']
+
                             # 各求人の詳細情報を取得
+                            skipped_dispatch_count = 0
                             for idx, job in enumerate(jobs):
                                 job['keyword'] = keyword
                                 job['area'] = area
+
+                                # 派遣フィルタが有効な場合、雇用形態に派遣を含む案件はスキップ
+                                if enable_dispatch_filter:
+                                    employment_type = job.get('employment_type', '') or ''
+                                    title = job.get('title', '') or ''
+                                    job_type = job.get('job_type', '') or ''
+
+                                    should_skip = False
+                                    for field_value in [employment_type, title, job_type]:
+                                        if field_value:
+                                            for dispatch_kw in dispatch_keywords:
+                                                if dispatch_kw in field_value:
+                                                    should_skip = True
+                                                    break
+                                        if should_skip:
+                                            break
+
+                                    if should_skip:
+                                        skipped_dispatch_count += 1
+                                        logger.debug(f"Skipped dispatch job: {job.get('title', 'N/A')} ({employment_type})")
+                                        continue
 
                                 if job.get('page_url'):
                                     try:
@@ -654,6 +680,9 @@ class CrawlService:
                                         logger.warning(f"Failed to fetch detail for {job['page_url']}: {e}")
 
                                 all_jobs.append(job)
+
+                            if skipped_dispatch_count > 0:
+                                logger.info(f"Skipped {skipped_dispatch_count} dispatch jobs before detail fetch")
 
                             # 待機（ボット検出対策）
                             import random
