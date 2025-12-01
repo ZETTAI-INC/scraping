@@ -316,21 +316,27 @@ class BaitoruScraper(BaseScraper):
 
                     card_selector = self.selectors.get("job_cards", "article.list-jobListDetail")
 
-                    # カードが描画されるまで待機（リトライ回数を減らす）
+                    # カードが描画されるまで待機
                     selector_ready = False
-                    for sel_attempt in range(2):
+                    max_attempts = 4 if page_num == 1 else 2  # 1ページ目は多めにリトライ
+                    for sel_attempt in range(max_attempts):
                         try:
                             await page.wait_for_selector(card_selector, timeout=5000)
                             selector_ready = True
                             break
                         except PlaywrightTimeoutError:
                             logger.warning(
-                                f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/2)"
+                                f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/{max_attempts})"
                             )
                             await page.wait_for_timeout(1000)
 
                     if not selector_ready:
-                        # セレクタが見つからない場合、ページが存在しない可能性が高い
+                        if page_num == 1:
+                            # 1ページ目でセレクタが見つからない場合はリトライ
+                            logger.warning(f"Job cards not found on page 1, will retry")
+                            if attempt == 0:
+                                continue
+                        # 2ページ目以降はページが存在しない可能性が高い
                         logger.info(f"Job cards not found on page {page_num}, assuming no more pages")
                         has_next_page = False
                         success = True

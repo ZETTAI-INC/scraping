@@ -644,20 +644,16 @@ class CrawlService:
                                 job['area'] = area
 
                                 # 派遣フィルタが有効な場合、雇用形態に派遣を含む案件はスキップ
+                                # ※カード段階ではemployment_typeのみチェック（title等は詳細取得後にフィルタ）
                                 if enable_dispatch_filter:
                                     employment_type = job.get('employment_type', '') or ''
-                                    title = job.get('title', '') or ''
-                                    job_type = job.get('job_type', '') or ''
 
                                     should_skip = False
-                                    for field_value in [employment_type, title, job_type]:
-                                        if field_value:
-                                            for dispatch_kw in dispatch_keywords:
-                                                if dispatch_kw in field_value:
-                                                    should_skip = True
-                                                    break
-                                        if should_skip:
-                                            break
+                                    if employment_type:
+                                        for dispatch_kw in dispatch_keywords:
+                                            if dispatch_kw in employment_type:
+                                                should_skip = True
+                                                break
 
                                     if should_skip:
                                         skipped_dispatch_count += 1
