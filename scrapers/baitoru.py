@@ -30,10 +30,11 @@ class BaitoruScraper(BaseScraper):
         バイトルのURL構造:
         - カテゴリなし: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/
         - カテゴリあり（新着順）: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/{category}/srt2/
+        - キーワード検索（新着順）: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/kw{keyword}/srt2/
         - ページ指定: 上記 + page{page}/
 
         Args:
-            keyword: 職種カテゴリ名（販売, 飲食, 事務 など）
+            keyword: 職種カテゴリ名（販売, 飲食, 事務 など）またはキーワード
             area: エリア名（東京, 大阪 など）
             page: ページ番号
         """
@@ -68,8 +69,19 @@ class BaitoruScraper(BaseScraper):
                     region=region, prefecture=prefecture,
                     area=area_path, category=category, page=page
                 )
+        elif keyword:
+            # カテゴリが見つからない場合はキーワード検索にフォールバック
+            # バイトルのキーワード検索URL: https://www.baitoru.com/kw/{keyword}/srt2/
+            # 注意: キーワード検索は全国検索となり、エリア絞り込みはできない
+            logger.info(f"Category not found for '{keyword}', using keyword search (nationwide)")
+            from urllib.parse import quote
+            encoded_keyword = quote(keyword, safe='')
+            if page == 1:
+                url = f"https://www.baitoru.com/kw/{encoded_keyword}/srt2/"
+            else:
+                url = f"https://www.baitoru.com/kw/{encoded_keyword}/srt2/page{page}/"
         else:
-            # カテゴリ指定なし
+            # キーワードなし
             if page == 1:
                 url_pattern = self.site_config.get("search_url_pattern")
                 url = url_pattern.format(region=region, prefecture=prefecture, area=area_path)
@@ -79,6 +91,47 @@ class BaitoruScraper(BaseScraper):
 
         logger.info(f"Generated URL: {url}")
         return url
+
+    async def _is_pr_card(self, card, is_first: bool, is_last: bool) -> bool:
+        """
+        PRカード（広告）かどうかを判定
+
+        PRカードの法則:
+        1. 最初のカード（list-listingの直後）
+        2. DIV（list-infoArea）の直後のカード
+        3. 中間のlist-listingの直後のカード
+        4. 最後のカード
+
+        判定方法: 前の兄弟要素がlist-jobListDetailでなければPR
+        """
+        # 最初と最後はPR
+        if is_first or is_last:
+            return True
+
+        # 前の兄弟要素をチェック
+        try:
+            prev_info = await card.evaluate("""(el) => {
+                const prev = el.previousElementSibling;
+                if (!prev) return { hasPrev: false };
+                return {
+                    hasPrev: true,
+                    isJobDetail: prev.classList.contains('list-jobListDetail'),
+                    tagName: prev.tagName,
+                    className: prev.className
+                };
+            }""")
+
+            if not prev_info.get('hasPrev'):
+                return True  # 前の要素がない場合はPR扱い
+
+            # 前の要素がlist-jobListDetailでなければPR
+            if not prev_info.get('isJobDetail'):
+                return True
+
+        except Exception as e:
+            logger.warning(f"Error checking PR status: {e}")
+
+        return False
 
     async def _extract_card_data(self, card) -> Optional[Dict[str, Any]]:
         """
@@ -236,14 +289,41 @@ class BaitoruScraper(BaseScraper):
 
                     logger.info(f"Found {len(job_cards)} jobs on page {page_num}")
 
-                    for card in job_cards:
-                        try:
-                            job_data = await self._extract_card_data(card)
-                            if job_data:
-                                all_jobs.append(job_data)
-                        except Exception as e:
-                            logger.error(f"Error extracting job card: {e}")
-                            continue
+                    # キーワード検索（/kw/）の場合はPRスキップなし
+                    # カテゴリ検索の場合はPRカードをスキップ
+                    is_keyword_search = "/kw/" in url
+                    if is_keyword_search:
+                        logger.info("Keyword search - not skipping PR cards")
+                        for card in job_cards:
+                            try:
+                                job_data = await self._extract_card_data(card)
+                                if job_data:
+                                    all_jobs.append(job_data)
+                            except Exception as e:
+                                logger.error(f"Error extracting job card: {e}")
+                                continue
+                    else:
+                        # カテゴリ検索: PRカードをスキップ
+                        pr_count = 0
+                        total_cards = len(job_cards)
+                        for idx, card in enumerate(job_cards):
+                            is_first = (idx == 0)
+                            is_last = (idx == total_cards - 1)
+
+                            try:
+                                if await self._is_pr_card(card, is_first, is_last):
+                                    pr_count += 1
+                                    continue
+
+                                job_data = await self._extract_card_data(card)
+                                if job_data:
+                                    all_jobs.append(job_data)
+                            except Exception as e:
+                                logger.error(f"Error extracting job card: {e}")
+                                continue
+
+                        if pr_count > 0:
+                            logger.info(f"Category search - skipped {pr_count} PR card(s)")
 
                     success = True
                     break
@@ -435,14 +515,41 @@ class BaitoruScraper(BaseScraper):
 
                 logger.info(f"Found {len(job_cards)} jobs on page {page_num}")
 
-                for card in job_cards:
-                    try:
-                        job_data = await self._extract_card_data(card)
-                        if job_data:
-                            jobs.append(job_data)
-                    except Exception as e:
-                        logger.error(f"Error extracting job card: {e}")
-                        continue
+                # キーワード検索（/kw/）の場合はPRスキップなし
+                # カテゴリ検索の場合はPRカードをスキップ
+                is_keyword_search = "/kw/" in url
+                if is_keyword_search:
+                    logger.info("Keyword search - not skipping PR cards")
+                    for card in job_cards:
+                        try:
+                            job_data = await self._extract_card_data(card)
+                            if job_data:
+                                jobs.append(job_data)
+                        except Exception as e:
+                            logger.error(f"Error extracting job card: {e}")
+                            continue
+                else:
+                    # カテゴリ検索: PRカードをスキップ
+                    pr_count = 0
+                    total_cards = len(job_cards)
+                    for idx, card in enumerate(job_cards):
+                        is_first = (idx == 0)
+                        is_last = (idx == total_cards - 1)
+
+                        try:
+                            if await self._is_pr_card(card, is_first, is_last):
+                                pr_count += 1
+                                continue
+
+                            job_data = await self._extract_card_data(card)
+                            if job_data:
+                                jobs.append(job_data)
+                        except Exception as e:
+                            logger.error(f"Error extracting job card: {e}")
+                            continue
+
+                    if pr_count > 0:
+                        logger.info(f"Category search - skipped {pr_count} PR card(s)")
 
                 return jobs
 
