@@ -915,8 +915,8 @@ class MainWindow(QMainWindow):
         self.analysis_figure.clear()
         ax = self.analysis_figure.add_subplot(111)
 
-        # 日本語フォント設定
-        plt.rcParams['font.family'] = ['MS Gothic', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', 'sans-serif']
+        # 日本語フォント設定（Windows用）
+        plt.rcParams['font.family'] = ['Yu Gothic', 'MS Gothic', 'Meiryo', 'sans-serif']
 
         x = np.arange(len(sorted_dates))
         width = 0.12  # 棒の幅を1/3に
