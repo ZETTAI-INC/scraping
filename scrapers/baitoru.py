@@ -363,13 +363,8 @@ class BaitoruScraper(BaseScraper):
                             await page.wait_for_timeout(1000)
 
                     if not selector_ready:
-                        if page_num == 1:
-                            # 1ページ目でセレクタが見つからない場合はリトライ
-                            logger.warning(f"Job cards not found on page 1, will retry")
-                            if attempt == 0:
-                                continue
-                        # 2ページ目以降はページが存在しない可能性が高い
-                        logger.info(f"Job cards not found on page {page_num}, assuming no more pages")
+                        # 4回タイムアウトしたら結果なしと判断（1ページ目も2ページ目以降も同じ処理）
+                        logger.info(f"Job cards not found on page {page_num} after {max_attempts} attempts, assuming no results")
                         has_next_page = False
                         success = True
                         break
