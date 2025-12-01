@@ -1095,7 +1095,19 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, total_combinations)
         self.progress_bar.setValue(0)
-        # time_labelは使用しない（new_count_labelで表示するため）
+        # 抽出中の初期表示をnew_count_labelに設定
+        self.new_count_label.setText("抽出中... 0 件取得済み")
+        self.new_count_label.setStyleSheet("""
+            QLabel {
+                color: #1565c0;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px;
+                background-color: #e3f2fd;
+                border: 2px solid #1976d2;
+                border-radius: 6px;
+            }
+        """)
         self.statusBar.showMessage(f"クローリング中... ({', '.join(source_names)} / {len(keywords)}キーワード x {len(areas)}地域)")
 
         self.crawl_worker = CrawlWorker(self.service, keywords, areas, max_pages, parallel, sources)
