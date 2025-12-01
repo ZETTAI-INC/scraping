@@ -372,12 +372,12 @@ class MainWindow(QMainWindow):
         self.new_count_label = QLabel("今回の新規取得：-- 件（抽出：-- 件）")
         self.new_count_label.setStyleSheet("""
             QLabel {
-                color: #ffffff;
+                color: #1565c0;
                 font-weight: bold;
                 font-size: 14px;
                 padding: 10px;
-                background-color: #1976d2;
-                border: 2px solid #1565c0;
+                background-color: #ffffff;
+                border: 2px solid #1976d2;
                 border-radius: 6px;
             }
         """)
@@ -1170,24 +1170,24 @@ class MainWindow(QMainWindow):
         if new_count > 0:
             self.new_count_label.setStyleSheet("""
                 QLabel {
-                    color: #ffffff;
+                    color: #1b5e20;
                     font-weight: bold;
                     font-size: 14px;
                     padding: 10px;
-                    background-color: #2e7d32;
-                    border: 2px solid #1b5e20;
+                    background-color: #ffffff;
+                    border: 2px solid #2e7d32;
                     border-radius: 6px;
                 }
             """)
         else:
             self.new_count_label.setStyleSheet("""
                 QLabel {
-                    color: #ffffff;
+                    color: #616161;
                     font-weight: bold;
                     font-size: 14px;
                     padding: 10px;
-                    background-color: #757575;
-                    border: 2px solid #616161;
+                    background-color: #ffffff;
+                    border: 2px solid #757575;
                     border-radius: 6px;
                 }
             """)
