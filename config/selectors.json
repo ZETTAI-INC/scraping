@@ -269,12 +269,12 @@
     },
     "area_codes": {
       "北海道": {
-        "region": "hokkaido",
+        "region": "tohoku",
         "prefecture": "hokkaido",
         "area": ""
       },
       "札幌": {
-        "region": "hokkaido",
+        "region": "tohoku",
         "prefecture": "hokkaido",
         "area": "sapporoshi"
       },
@@ -379,17 +379,17 @@
         "area": ""
       },
       "富山": {
-        "region": "hokuriku",
+        "region": "koshinetsu",
         "prefecture": "toyama",
         "area": ""
       },
       "石川": {
-        "region": "hokuriku",
+        "region": "koshinetsu",
         "prefecture": "ishikawa",
         "area": ""
       },
       "福井": {
-        "region": "hokuriku",
+        "region": "koshinetsu",
         "prefecture": "fukui",
         "area": ""
       },
@@ -464,47 +464,47 @@
         "area": ""
       },
       "鳥取": {
-        "region": "chugoku",
+        "region": "chushikoku",
         "prefecture": "tottori",
         "area": ""
       },
       "島根": {
-        "region": "chugoku",
+        "region": "chushikoku",
         "prefecture": "shimane",
         "area": ""
       },
       "岡山": {
-        "region": "chugoku",
+        "region": "chushikoku",
         "prefecture": "okayama",
         "area": ""
       },
       "広島": {
-        "region": "chugoku",
+        "region": "chushikoku",
         "prefecture": "hiroshima",
         "area": ""
       },
       "山口": {
-        "region": "chugoku",
+        "region": "chushikoku",
         "prefecture": "yamaguchi",
         "area": ""
       },
       "徳島": {
-        "region": "shikoku",
+        "region": "chushikoku",
         "prefecture": "tokushima",
         "area": ""
       },
       "香川": {
-        "region": "shikoku",
+        "region": "chushikoku",
         "prefecture": "kagawa",
         "area": ""
       },
       "愛媛": {
-        "region": "shikoku",
+        "region": "chushikoku",
         "prefecture": "ehime",
         "area": ""
       },
       "高知": {
-        "region": "shikoku",
+        "region": "chushikoku",
         "prefecture": "kochi",
         "area": ""
       },
