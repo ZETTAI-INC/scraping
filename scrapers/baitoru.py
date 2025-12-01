@@ -240,12 +240,23 @@ class BaitoruScraper(BaseScraper):
             logger.error(f"Error extracting card data: {e}")
             return None
 
-    async def search_jobs(self, page: Page, keyword: str, area: str, max_pages: int = 5) -> List[Dict[str, Any]]:
+    async def search_jobs(self, page: Page, keyword: str, area: str, max_pages: int = 5, seen_job_ids: set = None) -> List[Dict[str, Any]]:
         """
         求人検索を実行し、結果を返す
         複数カテゴリがある場合は、各カテゴリで検索を実行
+
+        Args:
+            page: Playwrightのページオブジェクト
+            keyword: 検索キーワード
+            area: 地域
+            max_pages: 最大ページ数
+            seen_job_ids: 既に取得済みのjob_idのセット（重複防止用）
         """
         all_jobs = []
+
+        # 重複防止用のセット（外部から渡されない場合は内部で作成）
+        if seen_job_ids is None:
+            seen_job_ids = set()
 
         # キーワードに対応するカテゴリのリストを取得
         categories = self.get_categories_for_keyword(keyword)
@@ -258,7 +269,7 @@ class BaitoruScraper(BaseScraper):
             logger.info(f"Found {len(categories)} categories for '{keyword}': {categories}")
 
         for category in categories:
-            category_jobs = await self._search_category(page, keyword, area, category, max_pages)
+            category_jobs = await self._search_category(page, keyword, area, category, max_pages, seen_job_ids)
             all_jobs.extend(category_jobs)
 
             # 複数カテゴリの場合は待機
@@ -268,12 +279,20 @@ class BaitoruScraper(BaseScraper):
 
         return all_jobs
 
-    async def _search_category(self, page: Page, keyword: str, area: str, category: str, max_pages: int) -> List[Dict[str, Any]]:
+    async def _search_category(self, page: Page, keyword: str, area: str, category: str, max_pages: int, seen_job_ids: set = None) -> List[Dict[str, Any]]:
         """
         単一カテゴリの検索を実行
+
+        Args:
+            seen_job_ids: 既に取得済みのjob_idのセット（重複防止用）
         """
         all_jobs = []
         has_next_page = True
+        skipped_duplicate_count = 0
+
+        # 重複防止用のセット（外部から渡されない場合は内部で作成）
+        if seen_job_ids is None:
+            seen_job_ids = set()
 
         for page_num in range(1, max_pages + 1):
             if not has_next_page:
@@ -402,6 +421,15 @@ class BaitoruScraper(BaseScraper):
 
                             job_data = await self._extract_card_data(card)
                             if job_data:
+                                # job_idで重複チェック
+                                job_id = job_data.get('job_id')
+                                if job_id:
+                                    if job_id in seen_job_ids:
+                                        skipped_duplicate_count += 1
+                                        logger.debug(f"Skipped duplicate job at card extraction: {job_id}")
+                                        continue
+                                    seen_job_ids.add(job_id)
+
                                 all_jobs.append(job_data)
                         except Exception as e:
                             logger.error(f"Error extracting job card: {e}")
@@ -409,6 +437,8 @@ class BaitoruScraper(BaseScraper):
 
                     if pr_count > 0:
                         logger.info(f"Skipped {pr_count} PR card(s)")
+                    if skipped_duplicate_count > 0:
+                        logger.info(f"Skipped {skipped_duplicate_count} duplicate job(s) on page {page_num}")
 
                     # 次のページが存在するかチェック
                     has_next_page = await page.evaluate("""(currentPageNum) => {

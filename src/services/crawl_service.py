@@ -624,12 +624,13 @@ class CrawlService:
                                 total_combinations
                             )
 
-                            # スクレイピング実行
+                            # スクレイピング実行（seen_job_idsを渡して重複を防止）
                             jobs = await scraper.search_jobs(
                                 page=page,
                                 keyword=keyword,
                                 area=area,
-                                max_pages=max_pages
+                                max_pages=max_pages,
+                                seen_job_ids=seen_job_ids
                             )
 
                             logger.info(f"Found {len(jobs)} jobs for keyword: {keyword} in {area}")
