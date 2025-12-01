@@ -359,6 +359,21 @@ class MainWindow(QMainWindow):
         self.time_label.setVisible(False)
         layout.addWidget(self.time_label)
 
+        # 最終クローリング日時
+        self.last_crawl_label = QLabel("最終クローリング日時：--")
+        self.last_crawl_label.setStyleSheet("""
+            QLabel {
+                color: #1565c0;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 5px;
+                background-color: #e3f2fd;
+                border: 1px solid #90caf9;
+                border-radius: 4px;
+            }
+        """)
+        layout.addWidget(self.last_crawl_label)
+
         # 統計情報
         stats_group = QGroupBox("統計情報")
         stats_layout = QVBoxLayout(stats_group)
@@ -951,6 +966,10 @@ class MainWindow(QMainWindow):
         self.stop_btn.setText("停止")
         self.progress_label.setVisible(False)
         self.progress_bar.setVisible(False)
+
+        # 最終クローリング日時を更新
+        now = datetime.now()
+        self.last_crawl_label.setText(f"最終クローリング日時：{now.strftime('%Y/%m/%d %H:%M')}")
 
         # 最終的な時間情報を表示
         elapsed_time = result.get('elapsed_time', 0)
