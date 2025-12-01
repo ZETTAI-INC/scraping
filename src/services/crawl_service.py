@@ -645,17 +645,9 @@ class CrawlService:
 
                             # 各求人の詳細情報を取得
                             skipped_dispatch_count = 0
-                            skipped_duplicate_count = 0
                             for idx, job in enumerate(jobs):
                                 job['keyword'] = keyword
                                 job['area'] = area
-
-                                # job_idで重複チェック
-                                job_id = job.get('job_id')
-                                if job_id and job_id in seen_job_ids:
-                                    skipped_duplicate_count += 1
-                                    logger.debug(f"Skipped duplicate job: {job_id}")
-                                    continue
 
                                 # 派遣フィルタが有効な場合、雇用形態に派遣を含む案件はスキップ
                                 # ※カード段階ではemployment_typeのみチェック（title等は詳細取得後にフィルタ）
@@ -689,16 +681,10 @@ class CrawlService:
                                     except Exception as e:
                                         logger.warning(f"Failed to fetch detail for {job['page_url']}: {e}")
 
-                                # 重複防止用にjob_idを記録
-                                if job_id:
-                                    seen_job_ids.add(job_id)
-
                                 all_jobs.append(job)
 
                             if skipped_dispatch_count > 0:
                                 logger.info(f"Skipped {skipped_dispatch_count} dispatch jobs before detail fetch")
-                            if skipped_duplicate_count > 0:
-                                logger.info(f"Skipped {skipped_duplicate_count} duplicate jobs")
 
                             # 待機（ボット検出対策）
                             import random
