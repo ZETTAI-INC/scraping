@@ -48,6 +48,7 @@ class CrawlWorker(QThread):
     progress = pyqtSignal(str, int, int)  # message, current, total
     error = pyqtSignal(str)
     time_update = pyqtSignal(float, int, int)  # elapsed_time, scraped_count, saved_count
+    detail_progress = pyqtSignal(int, int, int)  # current_detail, total_details, total_scraped
     stopped = pyqtSignal()  # 停止完了シグナル
 
     def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int, parallel: int, sources: List[str] = None):
@@ -76,7 +77,11 @@ class CrawlWorker(QThread):
             def progress_callback(message: str, current: int, total: int):
                 self.progress.emit(message, current_idx[0] + 1, total_combinations)
 
+            def detail_progress_callback(current_detail: int, total_details: int, total_scraped: int):
+                self.detail_progress.emit(current_detail, total_details, total_scraped)
+
             self.service.set_progress_callback(progress_callback)
+            self.service.set_detail_progress_callback(detail_progress_callback)
 
             # 各組み合わせを順次実行して進捗を報告
             all_results = {
@@ -1115,6 +1120,7 @@ class MainWindow(QMainWindow):
         self.crawl_worker.progress.connect(self.on_crawl_progress)
         self.crawl_worker.error.connect(self.on_crawl_error)
         self.crawl_worker.time_update.connect(self.on_time_update)
+        self.crawl_worker.detail_progress.connect(self.on_detail_progress)
         self.crawl_worker.stopped.connect(self.on_crawl_stopped)
         self.crawl_worker.start()
 
@@ -1145,7 +1151,23 @@ class MainWindow(QMainWindow):
         time_str = self._format_elapsed_time(elapsed_time)
 
         # 抽出件数をnew_count_labelにリアルタイム表示
-        self.new_count_label.setText(f"抽出中... {scraped_count} 件取得済み（{time_str}）")
+        self.new_count_label.setText(f"一覧取得完了: {scraped_count} 件（{time_str}）")
+        self.new_count_label.setStyleSheet("""
+            QLabel {
+                color: #1565c0;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px;
+                background-color: #e3f2fd;
+                border: 2px solid #1976d2;
+                border-radius: 6px;
+            }
+        """)
+
+    def on_detail_progress(self, current_detail: int, total_details: int, total_scraped: int):
+        """詳細取得進捗更新"""
+        # 詳細取得の進捗をnew_count_labelにリアルタイム表示
+        self.new_count_label.setText(f"詳細取得中... {current_detail}/{total_details} 件（全{total_scraped}件中）")
         self.new_count_label.setStyleSheet("""
             QLabel {
                 color: #1565c0;

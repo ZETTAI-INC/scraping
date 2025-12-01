@@ -49,16 +49,28 @@ class CrawlService:
 
         # 進捗コールバック
         self.progress_callback: Optional[Callable[[str, int, int], None]] = None
+        # 詳細進捗コールバック
+        self.detail_progress_callback: Optional[Callable[[int, int, int], None]] = None
 
     def set_progress_callback(self, callback: Callable[[str, int, int], None]):
         """進捗コールバックを設定"""
         self.progress_callback = callback
+
+    def set_detail_progress_callback(self, callback: Callable[[int, int, int], None]):
+        """詳細進捗コールバックを設定"""
+        self.detail_progress_callback = callback
 
     def _report_progress(self, message: str, current: int = 0, total: int = 0):
         """進捗を報告"""
         if self.progress_callback:
             self.progress_callback(message, current, total)
         logger.info(f"{message} ({current}/{total})")
+
+    def _report_detail_progress(self, current_detail: int, total_details: int, total_scraped: int):
+        """詳細取得進捗を報告"""
+        if self.detail_progress_callback:
+            self.detail_progress_callback(current_detail, total_details, total_scraped)
+        logger.debug(f"Detail progress: {current_detail}/{total_details} (total scraped: {total_scraped})")
 
     def _output_debug_job_log(self, jobs: List[Dict[str, Any]]):
         """デバッグ用: 取得した全件のjob_idとURLを出力"""
@@ -226,10 +238,16 @@ class CrawlService:
                         max_concurrent = 3
                         semaphore = asyncio.Semaphore(max_concurrent)
 
+                        detail_fetch_count = [0]  # 進捗カウント用
+                        total_details = len(unique_jobs)
+                        total_scraped = len(jobs)
+
                         async def fetch_detail_with_semaphore(job, idx):
                             async with semaphore:
                                 job_url = job.get('page_url') or job.get('url')
                                 if not job_url:
+                                    detail_fetch_count[0] += 1
+                                    self._report_detail_progress(detail_fetch_count[0], total_details, total_scraped)
                                     return
 
                                 # 各タスクごとに新しいコンテキストとページを作成
@@ -237,12 +255,6 @@ class CrawlService:
                                 try:
                                     page = await context.new_page()
                                     await StealthConfig.apply_stealth_scripts(page)
-
-                                    self._report_progress(
-                                        f"詳細取得中 ({idx+1}/{len(unique_jobs)})",
-                                        idx + 1,
-                                        len(unique_jobs)
-                                    )
 
                                     detail_data = await scraper.extract_detail_info(page, job_url)
                                     job.update(detail_data)
@@ -254,6 +266,8 @@ class CrawlService:
                                     logger.warning(f"Failed to fetch detail for {job_url}: {e}")
                                 finally:
                                     await context.close()
+                                    detail_fetch_count[0] += 1
+                                    self._report_detail_progress(detail_fetch_count[0], total_details, total_scraped)
 
                         # 全ての詳細取得タスクを並列実行
                         tasks = [
@@ -601,11 +615,14 @@ class CrawlService:
             total_raw_count = 0  # 重複を含む生の取得件数
 
             # 並列詳細取得用のヘルパー関数
-            async def fetch_detail_parallel(pages: list, jobs_to_fetch: list, scraper_instance):
+            async def fetch_detail_parallel(pages: list, jobs_to_fetch: list, scraper_instance, total_scraped: int):
                 """2ページを使って並列で詳細取得"""
                 import random
 
                 results = []
+                total_details = len(jobs_to_fetch)
+                current_detail = 0
+
                 for i in range(0, len(jobs_to_fetch), 2):
                     tasks = []
                     batch = jobs_to_fetch[i:i+2]
@@ -627,8 +644,12 @@ class CrawlService:
                         for r in batch_results:
                             if isinstance(r, dict):
                                 results.append(r)
+                                current_detail += 1
+                                # 詳細取得進捗を報告
+                                self._report_detail_progress(current_detail, total_details, total_scraped)
                             elif isinstance(r, Exception):
                                 logger.error(f"Detail fetch error: {r}")
+                                current_detail += 1
 
                 return results
 
@@ -722,7 +743,7 @@ class CrawlService:
                                     current_idx,
                                     total_combinations
                                 )
-                                fetched_jobs = await fetch_detail_parallel(detail_pages, jobs_to_fetch, scraper)
+                                fetched_jobs = await fetch_detail_parallel(detail_pages, jobs_to_fetch, scraper, total_raw_count)
                                 all_jobs.extend(fetched_jobs)
 
                             # 待機（ボット検出対策）
