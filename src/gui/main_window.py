@@ -18,10 +18,19 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QProgressBar, QStatusBar,
     QGroupBox, QSpinBox, QTextEdit, QTabWidget, QMessageBox,
     QFileDialog, QHeaderView, QSplitter, QFrame, QScrollArea,
-    QGridLayout
+    QGridLayout, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor
+
+# Matplotlib for charts
+import matplotlib
+matplotlib.use('QtAgg')
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import numpy as np
 
 # パス設定
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -358,6 +367,22 @@ class MainWindow(QMainWindow):
         """)
         self.time_label.setVisible(False)
         layout.addWidget(self.time_label)
+
+        # 今回の新規取得件数（目立つ表示）
+        self.new_count_label = QLabel("今回の新規取得：-- 件（抽出：-- 件）")
+        self.new_count_label.setStyleSheet("""
+            QLabel {
+                color: #ffffff;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px;
+                background-color: #1976d2;
+                border: 2px solid #1565c0;
+                border-radius: 6px;
+            }
+        """)
+        self.new_count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.new_count_label)
 
         # 最終クローリング日時
         self.last_crawl_label = QLabel("最終クローリング日時：--")
@@ -716,6 +741,10 @@ class MainWindow(QMainWindow):
         filter_tab = self.create_filter_tab()
         tabs.addTab(filter_tab, "フィルタ結果")
 
+        # 分析タブ
+        analysis_tab = self.create_analysis_tab()
+        tabs.addTab(analysis_tab, "分析")
+
         layout.addWidget(tabs)
         return panel
 
@@ -803,6 +832,164 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(btn_layout)
         return tab
+
+    def create_analysis_tab(self) -> QWidget:
+        """分析タブを作成（新規取得件数の推移グラフ）"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 上部コントロール
+        control_layout = QHBoxLayout()
+
+        control_layout.addWidget(QLabel("過去"))
+        self.analysis_days_spin = QSpinBox()
+        self.analysis_days_spin.setRange(1, 365)
+        self.analysis_days_spin.setValue(30)
+        self.analysis_days_spin.setSuffix(" 日")
+        self.analysis_days_spin.setMinimumWidth(80)
+        control_layout.addWidget(self.analysis_days_spin)
+
+        control_layout.addWidget(QLabel("の推移"))
+
+        self.refresh_chart_btn = QPushButton("グラフ更新")
+        self.refresh_chart_btn.setProperty("class", "primary")
+        self.refresh_chart_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_chart_btn.clicked.connect(self.update_analysis_chart)
+        control_layout.addWidget(self.refresh_chart_btn)
+
+        control_layout.addStretch()
+
+        layout.addLayout(control_layout)
+
+        # Matplotlibチャート
+        self.analysis_figure = Figure(figsize=(8, 5), dpi=100)
+        self.analysis_canvas = FigureCanvas(self.analysis_figure)
+        self.analysis_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self.analysis_canvas)
+
+        # 統計サマリー
+        self.analysis_summary_label = QLabel("グラフ更新ボタンを押すと、過去のクローリング結果を表示します")
+        self.analysis_summary_label.setStyleSheet("""
+            QLabel {
+                color: #424242;
+                font-size: 12px;
+                padding: 10px;
+                background-color: #f5f5f5;
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+            }
+        """)
+        layout.addWidget(self.analysis_summary_label)
+
+        return tab
+
+    def update_analysis_chart(self):
+        """分析チャートを更新"""
+        days = self.analysis_days_spin.value()
+
+        # クロールログを取得
+        crawl_data = self._get_crawl_logs(days)
+
+        if not crawl_data:
+            self.analysis_summary_label.setText(f"過去{days}日間のクローリングデータがありません")
+            self.analysis_figure.clear()
+            self.analysis_canvas.draw()
+            return
+
+        # 日付ごとに集計
+        from collections import defaultdict
+        daily_new_counts = defaultdict(int)
+        daily_total_counts = defaultdict(int)
+
+        for row in crawl_data:
+            date_str = row['date']
+            daily_new_counts[date_str] += row['new_count']
+            daily_total_counts[date_str] += row['total_count']
+
+        # 日付でソート
+        sorted_dates = sorted(daily_new_counts.keys())
+        new_counts = [daily_new_counts[d] for d in sorted_dates]
+        total_counts = [daily_total_counts[d] for d in sorted_dates]
+
+        # グラフ描画
+        self.analysis_figure.clear()
+        ax = self.analysis_figure.add_subplot(111)
+
+        # 日本語フォント設定
+        plt.rcParams['font.family'] = ['MS Gothic', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', 'sans-serif']
+
+        x = np.arange(len(sorted_dates))
+        width = 0.35
+
+        bars1 = ax.bar(x - width/2, new_counts, width, label='新規取得', color='#4caf50', alpha=0.8)
+        bars2 = ax.bar(x + width/2, total_counts, width, label='総抽出', color='#2196f3', alpha=0.6)
+
+        ax.set_xlabel('日付')
+        ax.set_ylabel('件数')
+        ax.set_title(f'過去{days}日間の新規取得件数推移')
+        ax.set_xticks(x)
+
+        # 日付ラベルを見やすく
+        if len(sorted_dates) > 10:
+            # 10日以上の場合は間引き表示
+            step = max(1, len(sorted_dates) // 10)
+            labels = [d if i % step == 0 else '' for i, d in enumerate(sorted_dates)]
+        else:
+            labels = sorted_dates
+
+        ax.set_xticklabels(labels, rotation=45, ha='right')
+        ax.legend()
+
+        # 値をバーの上に表示
+        for bar, count in zip(bars1, new_counts):
+            if count > 0:
+                ax.annotate(f'{count}',
+                           xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                           xytext=(0, 3),
+                           textcoords="offset points",
+                           ha='center', va='bottom', fontsize=8)
+
+        self.analysis_figure.tight_layout()
+        self.analysis_canvas.draw()
+
+        # サマリー更新
+        total_new = sum(new_counts)
+        total_extracted = sum(total_counts)
+        avg_new = total_new / len(new_counts) if new_counts else 0
+        max_new = max(new_counts) if new_counts else 0
+        max_date = sorted_dates[new_counts.index(max_new)] if new_counts and max_new > 0 else '-'
+
+        self.analysis_summary_label.setText(
+            f"期間: {sorted_dates[0]} ～ {sorted_dates[-1]} | "
+            f"累計新規: {total_new:,}件 | 累計抽出: {total_extracted:,}件 | "
+            f"平均新規: {avg_new:.1f}件/日 | 最大新規: {max_new}件 ({max_date})"
+        )
+
+    def _get_crawl_logs(self, days: int) -> List[Dict]:
+        """過去n日のクロールログを取得"""
+        try:
+            from datetime import timedelta
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+
+            with self.service.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        date(started_at) as date,
+                        SUM(new_count) as new_count,
+                        SUM(total_count) as total_count
+                    FROM crawl_logs
+                    WHERE started_at >= ?
+                    GROUP BY date(started_at)
+                    ORDER BY date(started_at)
+                """, (start_date.strftime('%Y-%m-%d'),))
+
+                rows = cursor.fetchall()
+                return [{'date': row[0], 'new_count': row[1] or 0, 'total_count': row[2] or 0} for row in rows]
+        except Exception as e:
+            logger.error(f"Error fetching crawl logs: {e}")
+            return []
 
     def _format_elapsed_time(self, elapsed_time: float) -> str:
         """経過時間を見やすい文字列にフォーマット"""
@@ -976,6 +1163,34 @@ class MainWindow(QMainWindow):
         scraped_count = result.get('scraped_count', result.get('total_count', 0))
         saved_count = result.get('saved_count', scraped_count)
         new_count = result.get('new_count', 0)
+
+        # 新規取得件数ラベルを更新（目立つ表示）
+        self.new_count_label.setText(f"今回の新規取得：{new_count} 件（抽出：{scraped_count} 件）")
+        # 新規が0件なら灰色、あれば緑色に
+        if new_count > 0:
+            self.new_count_label.setStyleSheet("""
+                QLabel {
+                    color: #ffffff;
+                    font-weight: bold;
+                    font-size: 14px;
+                    padding: 10px;
+                    background-color: #2e7d32;
+                    border: 2px solid #1b5e20;
+                    border-radius: 6px;
+                }
+            """)
+        else:
+            self.new_count_label.setStyleSheet("""
+                QLabel {
+                    color: #ffffff;
+                    font-weight: bold;
+                    font-size: 14px;
+                    padding: 10px;
+                    background-color: #757575;
+                    border: 2px solid #616161;
+                    border-radius: 6px;
+                }
+            """)
 
         time_str = self._format_elapsed_time(elapsed_time)
         count_for_avg = saved_count if saved_count > 0 else scraped_count
