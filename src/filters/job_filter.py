@@ -259,6 +259,11 @@ class JobFilter:
             if keyword in combined_text:
                 return f"除外キーワード（{keyword}）"
 
+        # Step 3.5: 雇用形態に「派遣」が含まれる場合も除外
+        employment_type = job.get('employment_type', '')
+        if employment_type and '派遣' in employment_type:
+            return f"雇用形態（{employment_type}）"
+
         # Step 4: 業界フィルタ
         for industry in self.exclude_industries:
             if industry in combined_text:
