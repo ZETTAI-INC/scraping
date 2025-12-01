@@ -39,6 +39,7 @@ class CrawlWorker(QThread):
     progress = pyqtSignal(str, int, int)  # message, current, total
     error = pyqtSignal(str)
     time_update = pyqtSignal(float, int, int)  # elapsed_time, scraped_count, saved_count
+    stopped = pyqtSignal()  # 停止完了シグナル
 
     def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int, parallel: int, sources: List[str] = None):
         super().__init__()
@@ -48,6 +49,11 @@ class CrawlWorker(QThread):
         self.max_pages = max_pages
         self.parallel = parallel
         self.sources = sources or ["townwork"]  # デフォルトはタウンワーク
+        self._stop_requested = False
+
+    def request_stop(self):
+        """停止をリクエスト"""
+        self._stop_requested = True
 
     def run(self):
         try:
@@ -76,9 +82,20 @@ class CrawlWorker(QThread):
             # 時間計測開始
             start_time = time.time()
 
+            stopped = False
             for source in self.sources:
+                if self._stop_requested:
+                    stopped = True
+                    break
                 for kw in self.keywords:
+                    if self._stop_requested:
+                        stopped = True
+                        break
                     for area in self.areas:
+                        if self._stop_requested:
+                            stopped = True
+                            break
+
                         # 進捗を報告
                         source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル"}
                         source_label = source_labels.get(source, source)
@@ -138,9 +155,14 @@ class CrawlWorker(QThread):
             all_results['elapsed_time'] = total_elapsed
             all_results['start_time'] = start_time
             all_results['end_time'] = end_time
+            all_results['stopped'] = stopped
 
             loop.close()
-            self.finished.emit(all_results)
+
+            if stopped:
+                self.stopped.emit()
+            else:
+                self.finished.emit(all_results)
 
         except Exception as e:
             self.error.emit(str(e))
@@ -273,13 +295,42 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.left_tabs, 1)
 
-        # 実行ボタン（タブの下に配置）
+        # 実行ボタン・停止ボタン（タブの下に配置）
+        btn_layout = QHBoxLayout()
+
         self.search_btn = QPushButton("検索実行")
         self.search_btn.setProperty("class", "primary")
         self.search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.search_btn.setMinimumHeight(40)
         self.search_btn.clicked.connect(self.start_crawl)
-        layout.addWidget(self.search_btn)
+        btn_layout.addWidget(self.search_btn)
+
+        self.stop_btn = QPushButton("停止")
+        self.stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+            QPushButton:pressed {
+                background-color: #bd2130;
+            }
+            QPushButton:disabled {
+                background-color: #6c757d;
+            }
+        """)
+        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn.setMinimumHeight(40)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self.stop_crawl)
+        btn_layout.addWidget(self.stop_btn)
+
+        layout.addLayout(btn_layout)
 
         # 進捗表示ラベル（クローリング中の詳細）
         self.progress_label = QLabel("")
@@ -835,6 +886,7 @@ class MainWindow(QMainWindow):
                 return
 
         self.search_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
         self.progress_label.setVisible(True)
         self.progress_label.setText("クローリング開始中...")
         self.progress_bar.setVisible(True)
@@ -849,7 +901,24 @@ class MainWindow(QMainWindow):
         self.crawl_worker.progress.connect(self.on_crawl_progress)
         self.crawl_worker.error.connect(self.on_crawl_error)
         self.crawl_worker.time_update.connect(self.on_time_update)
+        self.crawl_worker.stopped.connect(self.on_crawl_stopped)
         self.crawl_worker.start()
+
+    def stop_crawl(self):
+        """クローリングを停止"""
+        if hasattr(self, 'crawl_worker') and self.crawl_worker.isRunning():
+            self.stop_btn.setEnabled(False)
+            self.stop_btn.setText("停止中...")
+            self.progress_label.setText("停止処理中... 現在の検索が完了するまでお待ちください")
+            self.crawl_worker.request_stop()
+
+    def on_crawl_stopped(self):
+        """クローリング停止完了"""
+        self.search_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setText("停止")
+        self.progress_label.setText("停止しました")
+        self.statusBar.showMessage("クローリングを停止しました")
 
     def on_crawl_progress(self, message: str, current: int, total: int):
         """クローリング進捗更新"""
@@ -878,6 +947,8 @@ class MainWindow(QMainWindow):
     def on_crawl_finished(self, result: dict):
         """クローリング完了"""
         self.search_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setText("停止")
         self.progress_label.setVisible(False)
         self.progress_bar.setVisible(False)
 
@@ -936,6 +1007,8 @@ class MainWindow(QMainWindow):
     def on_crawl_error(self, error_msg: str):
         """クローリングエラー"""
         self.search_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setText("停止")
         self.progress_label.setVisible(False)
         self.progress_bar.setVisible(False)
         self.time_label.setVisible(False)
