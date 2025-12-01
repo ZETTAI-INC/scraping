@@ -541,15 +541,21 @@ class BaitoruScraper(BaseScraper):
                     try:
                         phone_btn = await page.query_selector(btn_sel)
                         if phone_btn:
-                            await phone_btn.click()
-                            phone_button_clicked = True
-                            logger.debug(f"Clicked phone button with selector: {btn_sel}")
-                            # ボタンクリック後、電話番号が表示されるまで待機
-                            await page.wait_for_timeout(1000)
-                            break
+                            # ボタンが表示されているか確認
+                            is_visible = await phone_btn.is_visible()
+                            if is_visible:
+                                await phone_btn.click()
+                                phone_button_clicked = True
+                                logger.debug(f"Clicked phone button with selector: {btn_sel}")
+                                # ボタンクリック後、電話番号が表示されるまで待機
+                                await page.wait_for_timeout(1000)
+                                break
                     except Exception as e:
                         logger.debug(f"Failed to click phone button {btn_sel}: {e}")
                         continue
+
+                if not phone_button_clicked:
+                    logger.debug("Phone button not found or not clickable, trying to get phone directly")
 
                 # 電話番号をセレクタから取得
                 tel_selectors = [
@@ -561,10 +567,12 @@ class BaitoruScraper(BaseScraper):
                     ".telNumber",
                     "[class*='telNum']",
                 ]
+
+                phone_found = False
                 for sel in tel_selectors:
                     try:
-                        tel_elem = await page.query_selector(sel)
-                        if tel_elem:
+                        tel_elems = await page.query_selector_all(sel)
+                        for tel_elem in tel_elems:
                             tel_text = await tel_elem.inner_text()
                             # tel:リンクの場合はhrefから取得
                             if not tel_text:
@@ -579,9 +587,16 @@ class BaitoruScraper(BaseScraper):
                                     detail_data["phone"] = phone_raw
                                     detail_data["phone_number_normalized"] = phone_raw
                                     logger.debug(f"Found phone number: {phone_raw}")
+                                    phone_found = True
                                     break
+                        if phone_found:
+                            break
                     except Exception:
                         continue
+
+                if not phone_found:
+                    logger.debug("No valid phone number found on this page")
+
             except Exception as e:
                 logger.debug(f"Error getting phone number: {e}")
 
