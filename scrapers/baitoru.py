@@ -71,15 +71,15 @@ class BaitoruScraper(BaseScraper):
                 )
         elif keyword:
             # カテゴリが見つからない場合はキーワード検索にフォールバック
-            # バイトルのキーワード検索URL: https://www.baitoru.com/kw/{keyword}/srt2/
-            # 注意: キーワード検索は全国検索となり、エリア絞り込みはできない
-            logger.info(f"Category not found for '{keyword}', using keyword search (nationwide)")
+            # バイトルのキーワード検索URL: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/wrd{keyword}/srt2/
+            # 例: https://www.baitoru.com/kanto/jlist/tokyo/23ku/wrdweb/srt2/
+            logger.info(f"Category not found for '{keyword}', using keyword search with area")
             from urllib.parse import quote
             encoded_keyword = quote(keyword, safe='')
             if page == 1:
-                url = f"https://www.baitoru.com/kw/{encoded_keyword}/srt2/"
+                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_path}/wrd{encoded_keyword}/srt2/"
             else:
-                url = f"https://www.baitoru.com/kw/{encoded_keyword}/srt2/page{page}/"
+                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_path}/wrd{encoded_keyword}/srt2/page{page}/"
         else:
             # キーワードなし
             if page == 1:
@@ -270,12 +270,42 @@ class BaitoruScraper(BaseScraper):
                         if attempt == 0:
                             continue
 
-                    # 求人カードを取得
-                    job_cards = await page.query_selector_all(card_selector)
+                    # 求人カードを取得（ページネーションより上のもののみ）
+                    # ページネーション要素より前のカードだけを取得するJavaScript
+                    job_cards_above_pagination = await page.evaluate("""() => {
+                        const cards = document.querySelectorAll('article.list-jobListDetail');
+                        const pagination = document.querySelector('.list-pager, .pagination, nav.pager');
+
+                        if (!pagination) {
+                            // ページネーションがない場合は全カードを返す
+                            return Array.from(cards).map((_, i) => i);
+                        }
+
+                        const paginationTop = pagination.getBoundingClientRect().top;
+                        const validIndices = [];
+
+                        cards.forEach((card, index) => {
+                            const cardTop = card.getBoundingClientRect().top;
+                            if (cardTop < paginationTop) {
+                                validIndices.push(index);
+                            }
+                        });
+
+                        return validIndices;
+                    }""")
+
+                    all_cards = await page.query_selector_all(card_selector)
+
+                    # ページネーションより上のカードのみをフィルタリング
+                    if job_cards_above_pagination:
+                        job_cards = [all_cards[i] for i in job_cards_above_pagination if i < len(all_cards)]
+                    else:
+                        job_cards = all_cards
 
                     if len(job_cards) == 0:
                         await page.wait_for_timeout(1000)
-                        job_cards = await page.query_selector_all(card_selector)
+                        all_cards = await page.query_selector_all(card_selector)
+                        job_cards = all_cards
 
                     if len(job_cards) == 0:
                         logger.warning(f"No job cards found on page {page_num}")
@@ -287,43 +317,29 @@ class BaitoruScraper(BaseScraper):
                             success = True
                             break
 
-                    logger.info(f"Found {len(job_cards)} jobs on page {page_num}")
+                    logger.info(f"Found {len(job_cards)} jobs on page {page_num} (filtered above pagination)")
 
-                    # キーワード検索（/kw/）の場合はPRスキップなし
-                    # カテゴリ検索の場合はPRカードをスキップ
-                    is_keyword_search = "/kw/" in url
-                    if is_keyword_search:
-                        logger.info("Keyword search - not skipping PR cards")
-                        for card in job_cards:
-                            try:
-                                job_data = await self._extract_card_data(card)
-                                if job_data:
-                                    all_jobs.append(job_data)
-                            except Exception as e:
-                                logger.error(f"Error extracting job card: {e}")
-                                continue
-                    else:
-                        # カテゴリ検索: PRカードをスキップ
-                        pr_count = 0
-                        total_cards = len(job_cards)
-                        for idx, card in enumerate(job_cards):
-                            is_first = (idx == 0)
-                            is_last = (idx == total_cards - 1)
+                    # PRカードをスキップ
+                    pr_count = 0
+                    total_cards = len(job_cards)
+                    for idx, card in enumerate(job_cards):
+                        is_first = (idx == 0)
+                        is_last = (idx == total_cards - 1)
 
-                            try:
-                                if await self._is_pr_card(card, is_first, is_last):
-                                    pr_count += 1
-                                    continue
-
-                                job_data = await self._extract_card_data(card)
-                                if job_data:
-                                    all_jobs.append(job_data)
-                            except Exception as e:
-                                logger.error(f"Error extracting job card: {e}")
+                        try:
+                            if await self._is_pr_card(card, is_first, is_last):
+                                pr_count += 1
                                 continue
 
-                        if pr_count > 0:
-                            logger.info(f"Category search - skipped {pr_count} PR card(s)")
+                            job_data = await self._extract_card_data(card)
+                            if job_data:
+                                all_jobs.append(job_data)
+                        except Exception as e:
+                            logger.error(f"Error extracting job card: {e}")
+                            continue
+
+                    if pr_count > 0:
+                        logger.info(f"Skipped {pr_count} PR card(s)")
 
                     success = True
                     break

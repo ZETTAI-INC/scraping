@@ -588,6 +588,9 @@ class CrawlService:
         }
 
         try:
+            from playwright.async_api import async_playwright
+            from utils.stealth import StealthConfig, create_stealth_context
+
             self._report_progress("バイトル クローリング開始", 0, 1)
 
             # スクレイパー初期化
@@ -595,27 +598,58 @@ class CrawlService:
 
             all_jobs = []
 
-            # キーワードごとにスクレイピング
-            total_keywords = len(keywords)
-            for idx, keyword in enumerate(keywords, 1):
-                self._report_progress(
-                    f"[バイトル] {keyword} を検索中...",
-                    idx,
-                    total_keywords
-                )
+            async with async_playwright() as p:
+                # Stealth設定を取得
+                launch_args = StealthConfig.get_launch_args()
+                launch_args["headless"] = False  # ブラウザ表示（ボット検出対策）
 
-                # スクレイピング実行
-                jobs = await scraper.search_jobs(
-                    keyword=keyword,
-                    max_pages=max_pages
-                )
+                browser = await p.chromium.launch(**launch_args)
 
-                for job in jobs:
-                    job['keyword'] = keyword
-                    job['area'] = areas[0] if areas else '全国'
-                    all_jobs.append(job)
+                try:
+                    context = await create_stealth_context(browser)
+                    page = await context.new_page()
+                    await StealthConfig.apply_stealth_scripts(page)
 
-                logger.info(f"Found {len(jobs)} jobs for keyword: {keyword}")
+                    # キーワード×地域の組み合わせでスクレイピング
+                    total_combinations = len(keywords) * len(areas)
+                    current_idx = 0
+
+                    for keyword in keywords:
+                        for area in areas:
+                            current_idx += 1
+                            self._report_progress(
+                                f"[バイトル] {area} × {keyword} を検索中...",
+                                current_idx,
+                                total_combinations
+                            )
+
+                            # スクレイピング実行
+                            jobs = await scraper.search_jobs(
+                                page=page,
+                                keyword=keyword,
+                                area=area,
+                                max_pages=max_pages
+                            )
+
+                            for job in jobs:
+                                job['keyword'] = keyword
+                                job['area'] = area
+                                all_jobs.append(job)
+
+                            logger.info(f"Found {len(jobs)} jobs for keyword: {keyword} in {area}")
+
+                            # 待機（ボット検出対策）
+                            import random
+                            await page.wait_for_timeout(random.randint(2000, 4000))
+
+                    await context.close()
+
+                except Exception as e:
+                    logger.error(f"Baitoru scraping error: {e}")
+                    result['error'] = str(e)
+
+                finally:
+                    await browser.close()
 
             result['total_count'] = len(all_jobs)
             result['scraped_count'] = len(all_jobs)
