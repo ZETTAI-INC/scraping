@@ -635,7 +635,7 @@ class CrawlService:
             async with async_playwright() as p:
                 # Stealth設定を取得
                 launch_args = StealthConfig.get_launch_args()
-                launch_args["headless"] = False  # ブラウザ表示（ボット検出対策）
+                launch_args["headless"] = True  # バックグラウンドで実行
 
                 browser = await p.chromium.launch(**launch_args)
 
