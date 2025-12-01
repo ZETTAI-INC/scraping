@@ -406,6 +406,18 @@ class BaitoruScraper(BaseScraper):
     async def extract_detail_info(self, page: Page, url: str) -> Dict[str, Any]:
         """
         詳細ページから追加情報を取得
+
+        取得項目:
+        - 郵便番号
+        - 住所詳細
+        - 電話番号
+        - 会社名
+        - 事業内容
+        - 仕事内容
+        - 勤務時間
+        - 休日休暇
+        - 応募資格
+        - 掲載日
         """
         detail_data = {}
 
@@ -416,25 +428,70 @@ class BaitoruScraper(BaseScraper):
             body_text = await page.inner_text("body")
 
             # 郵便番号と住所の抽出
-            postal_match = re.search(r"(\d{3})-?(\d{4})(東京都|大阪府|北海道|京都府|.{2,3}県)(.+?)(?=\n|交通|地図|※)", body_text)
+            postal_match = re.search(r"〒?(\d{3})-?(\d{4})\s*(東京都|大阪府|北海道|京都府|.{2,3}県)(.+?)(?=\n|交通|地図|※|アクセス)", body_text)
             if postal_match:
                 detail_data["postal_code"] = postal_match.group(1) + postal_match.group(2)
                 detail_data["address"] = postal_match.group(3) + postal_match.group(4).strip()
+            else:
+                # 別のパターン：郵便番号なしで都道府県から始まる
+                addr_match = re.search(r"勤務地\s*[\n\r]*(東京都|大阪府|北海道|京都府|.{2,3}県)(.{5,80}?)(?=\n|交通|地図|※|アクセス)", body_text)
+                if addr_match:
+                    detail_data["address"] = addr_match.group(1) + addr_match.group(2).strip()
 
-            # 電話番号の抽出
-            phone_match = re.search(r"(\d{2,4}[-]?\d{2,4}[-]?\d{3,4})", body_text)
+            # 電話番号の抽出（代表電話番号）
+            phone_match = re.search(r"電話番号[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})", body_text)
             if phone_match:
-                detail_data["phone"] = phone_match.group(1).replace("-", "")
+                detail_data["phone"] = phone_match.group(1).replace("-", "").replace("ー", "")
+            else:
+                # 別のパターン：連絡先
+                phone_match2 = re.search(r"連絡先[：:\s]*(\d{2,4}[-ー]?\d{2,4}[-ー]?\d{3,4})", body_text)
+                if phone_match2:
+                    detail_data["phone"] = phone_match2.group(1).replace("-", "").replace("ー", "")
+
+            # 会社名
+            company_match = re.search(r"会社名\s*[\n\r]*(.+?)(?=\n|$)", body_text)
+            if company_match:
+                detail_data["company_name"] = company_match.group(1).strip()
+            else:
+                # 別のパターン：企業名、店舗名
+                company_match2 = re.search(r"(企業名|店舗名|事業所名)\s*[\n\r]*(.+?)(?=\n|$)", body_text)
+                if company_match2:
+                    detail_data["company_name"] = company_match2.group(2).strip()
 
             # 事業内容
-            business_match = re.search(r"事業内容\s*[\n\r]*(.+?)(?=\n所在|$)", body_text)
+            business_match = re.search(r"事業内容\s*[\n\r]*(.+?)(?=\n所在|従業員|設立|$)", body_text)
             if business_match:
-                detail_data["business_content"] = business_match.group(1).strip()
+                detail_data["business_content"] = business_match.group(1).strip()[:300]
 
             # 仕事内容
-            desc_match = re.search(r"仕事内容\s*[\n\r]*(.+?)(?=\n勤務地|$)", body_text, re.DOTALL)
+            desc_match = re.search(r"仕事内容\s*[\n\r]*(.+?)(?=\n勤務地|\n給与|\n待遇|$)", body_text, re.DOTALL)
             if desc_match:
                 detail_data["job_description"] = desc_match.group(1).strip()[:500]
+
+            # 勤務時間
+            time_match = re.search(r"勤務時間\s*[\n\r]*(.+?)(?=\n休日|\n給与|\n待遇|$)", body_text)
+            if time_match:
+                detail_data["working_hours"] = time_match.group(1).strip()[:200]
+
+            # 休日休暇
+            holiday_match = re.search(r"休日[・休暇]*\s*[\n\r]*(.+?)(?=\n待遇|\n福利|\n応募|$)", body_text)
+            if holiday_match:
+                detail_data["holidays"] = holiday_match.group(1).strip()[:200]
+
+            # 応募資格
+            qualification_match = re.search(r"(応募資格|対象となる方|歓迎)\s*[\n\r]*(.+?)(?=\n待遇|\n勤務|\n給与|$)", body_text, re.DOTALL)
+            if qualification_match:
+                detail_data["qualifications"] = qualification_match.group(2).strip()[:300]
+
+            # 掲載日（掲載開始日、更新日などから抽出）
+            published_match = re.search(r"(掲載期間|掲載開始|更新日|登録日)[：:\s]*(\d{4}[/\-年]\d{1,2}[/\-月]\d{1,2})", body_text)
+            if published_match:
+                detail_data["published_date"] = published_match.group(2).replace("年", "/").replace("月", "/")
+
+            # 求人番号
+            job_id_match = re.search(r"(求人番号|お仕事No|原稿ID)[：:\s]*([A-Za-z0-9\-]+)", body_text)
+            if job_id_match:
+                detail_data["job_number"] = job_id_match.group(2)
 
         except Exception as e:
             logger.error(f"Error extracting detail info from {url}: {e}")

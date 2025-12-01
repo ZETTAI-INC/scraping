@@ -631,12 +631,29 @@ class CrawlService:
                                 max_pages=max_pages
                             )
 
-                            for job in jobs:
+                            logger.info(f"Found {len(jobs)} jobs for keyword: {keyword} in {area}")
+
+                            # 各求人の詳細情報を取得
+                            for idx, job in enumerate(jobs):
                                 job['keyword'] = keyword
                                 job['area'] = area
-                                all_jobs.append(job)
 
-                            logger.info(f"Found {len(jobs)} jobs for keyword: {keyword} in {area}")
+                                if job.get('page_url'):
+                                    try:
+                                        self._report_progress(
+                                            f"[バイトル] 詳細取得中 ({idx+1}/{len(jobs)})",
+                                            current_idx,
+                                            total_combinations
+                                        )
+                                        detail_data = await scraper.extract_detail_info(page, job['page_url'])
+                                        job.update(detail_data)
+                                        # サーバー負荷軽減のため待機
+                                        import random
+                                        await page.wait_for_timeout(random.randint(800, 1500))
+                                    except Exception as e:
+                                        logger.warning(f"Failed to fetch detail for {job['page_url']}: {e}")
+
+                                all_jobs.append(job)
 
                             # 待機（ボット検出対策）
                             import random
