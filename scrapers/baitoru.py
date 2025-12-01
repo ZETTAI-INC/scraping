@@ -77,20 +77,15 @@ class BaitoruScraper(BaseScraper):
             categories = self.get_categories_for_keyword(keyword)
             category = categories[0] if categories else ""
 
+        # area_pathが空の場合は県全域検索
+        area_segment = f"{area_path}/" if area_path else ""
+
         if category:
             # カテゴリ指定あり（新着順 srt2）
             if page == 1:
-                url_pattern = self.site_config.get("search_url_pattern_category")
-                url = url_pattern.format(
-                    region=region, prefecture=prefecture,
-                    area=area_path, category=category
-                )
+                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_segment}{category}/srt2/"
             else:
-                url_pattern = self.site_config.get("search_url_pattern_category_page")
-                url = url_pattern.format(
-                    region=region, prefecture=prefecture,
-                    area=area_path, category=category, page=page
-                )
+                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_segment}{category}/srt2/page{page}/"
         elif keyword:
             # カテゴリが見つからない場合はキーワード検索にフォールバック
             # バイトルのキーワード検索URL: https://www.baitoru.com/{region}/jlist/{prefecture}/{area}/wrd{keyword}/srt2/
@@ -99,17 +94,15 @@ class BaitoruScraper(BaseScraper):
             from urllib.parse import quote
             encoded_keyword = quote(keyword, safe='')
             if page == 1:
-                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_path}/wrd{encoded_keyword}/srt2/"
+                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_segment}wrd{encoded_keyword}/srt2/"
             else:
-                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_path}/wrd{encoded_keyword}/srt2/page{page}/"
+                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_segment}wrd{encoded_keyword}/srt2/page{page}/"
         else:
             # キーワードなし
             if page == 1:
-                url_pattern = self.site_config.get("search_url_pattern")
-                url = url_pattern.format(region=region, prefecture=prefecture, area=area_path)
+                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_segment}"
             else:
-                url_pattern = self.site_config.get("search_url_pattern_page")
-                url = url_pattern.format(region=region, prefecture=prefecture, area=area_path, page=page)
+                url = f"https://www.baitoru.com/{region}/jlist/{prefecture}/{area_segment}page{page}/"
 
         logger.info(f"Generated URL: {url}")
         return url

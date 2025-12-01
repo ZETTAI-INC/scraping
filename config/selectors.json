@@ -271,7 +271,7 @@
       "東京": {
         "region": "kanto",
         "prefecture": "tokyo",
-        "area": "23ku"
+        "area": ""
       },
       "東京23区": {
         "region": "kanto",
@@ -291,12 +291,17 @@
       "大阪": {
         "region": "kansai",
         "prefecture": "osaka",
+        "area": ""
+      },
+      "大阪市": {
+        "region": "kansai",
+        "prefecture": "osaka",
         "area": "osakashi"
       },
       "神奈川": {
         "region": "kanto",
         "prefecture": "kanagawa",
-        "area": "yokohamashi"
+        "area": ""
       },
       "横浜": {
         "region": "kanto",
@@ -306,9 +311,19 @@
       "埼玉": {
         "region": "kanto",
         "prefecture": "saitama",
+        "area": ""
+      },
+      "さいたま市": {
+        "region": "kanto",
+        "prefecture": "saitama",
         "area": "saitamashi"
       },
       "千葉": {
+        "region": "kanto",
+        "prefecture": "chiba",
+        "area": ""
+      },
+      "千葉市": {
         "region": "kanto",
         "prefecture": "chiba",
         "area": "chibashi"
@@ -316,7 +331,7 @@
       "愛知": {
         "region": "tokai",
         "prefecture": "aichi",
-        "area": "nagoyashi"
+        "area": ""
       },
       "名古屋": {
         "region": "tokai",
@@ -326,12 +341,17 @@
       "福岡": {
         "region": "kyushu",
         "prefecture": "fukuoka",
+        "area": ""
+      },
+      "福岡市": {
+        "region": "kyushu",
+        "prefecture": "fukuoka",
         "area": "fukuokashi"
       },
       "北海道": {
         "region": "hokkaido",
         "prefecture": "hokkaido",
-        "area": "sapporoshi"
+        "area": ""
       },
       "札幌": {
         "region": "hokkaido",
