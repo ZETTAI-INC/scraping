@@ -635,12 +635,13 @@ class CrawlService:
             async with async_playwright() as p:
                 # Stealth設定を取得
                 launch_args = StealthConfig.get_launch_args()
-                launch_args["headless"] = True  # バックグラウンドで実行
+                # バイトルはボット検出が厳しいため、ブラウザ表示モードで実行
+                launch_args["headless"] = False
 
                 browser = await p.chromium.launch(**launch_args)
 
                 try:
-                    # 画像・動画をブロックして高速化
+                    # 画像・動画をブロックして高速化（CSSは残す）
                     context = await create_stealth_context(browser, block_resources=True)
 
                     # メインページ（一覧取得用）
