@@ -80,7 +80,8 @@ class CrawlWorker(QThread):
                 for kw in self.keywords:
                     for area in self.areas:
                         # 進捗を報告
-                        source_label = "タウンワーク" if source == "townwork" else "Indeed"
+                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル"}
+                        source_label = source_labels.get(source, source)
                         self.progress.emit(f"[{source_label}] {area} × {kw} を検索中...", current_idx[0] + 1, total_combinations)
 
                         if source == "townwork":
@@ -98,6 +99,14 @@ class CrawlWorker(QThread):
                                     keywords=[kw],
                                     areas=[area],
                                     max_pages=1  # Indeed は403対策のため1ページ固定
+                                )
+                            )
+                        elif source == "baitoru":
+                            result = loop.run_until_complete(
+                                self.service.crawl_baitoru(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=self.max_pages
                                 )
                             )
                         else:
@@ -162,7 +171,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         """UIを初期化"""
-        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed")
+        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed / バイトル")
         self.setMinimumSize(1200, 800)
 
         # メインウィジェット
@@ -216,6 +225,11 @@ class MainWindow(QMainWindow):
         self.indeed_check.setChecked(False)
         self.indeed_check.setToolTip("Indeed検索（403対策のため1ページ/組み合わせに制限）")
         source_layout.addWidget(self.indeed_check)
+
+        self.baitoru_check = QCheckBox("バイトル")
+        self.baitoru_check.setChecked(False)
+        self.baitoru_check.setToolTip("バイトル検索（カテゴリがない場合はキーワード検索にフォールバック）")
+        source_layout.addWidget(self.baitoru_check)
 
         layout.addWidget(source_group)
 
@@ -770,6 +784,8 @@ class MainWindow(QMainWindow):
             sources.append("townwork")
         if self.indeed_check.isChecked():
             sources.append("indeed")
+        if self.baitoru_check.isChecked():
+            sources.append("baitoru")
         return sources
 
     def start_crawl(self):
@@ -801,6 +817,8 @@ class MainWindow(QMainWindow):
             source_names.append("タウンワーク")
         if "indeed" in sources:
             source_names.append("Indeed")
+        if "baitoru" in sources:
+            source_names.append("バイトル")
 
         # 確認ダイアログ
         total_combinations = len(keywords) * len(areas) * len(sources)

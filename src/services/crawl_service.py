@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from scrapers.townwork import TownworkScraper
 from scrapers.indeed import IndeedScraper
+from scrapers.baitoru import BaitoruScraper
 from src.database.db_manager import DatabaseManager
 from src.database.job_repository import JobRepository
 from src.filters.job_filter import JobFilter, FilterResult
@@ -43,6 +44,7 @@ class CrawlService:
         self.scrapers = {
             "townwork": TownworkScraper,
             "indeed": IndeedScraper,
+            "baitoru": BaitoruScraper,
         }
 
         # 進捗コールバック
@@ -529,6 +531,186 @@ class CrawlService:
                 )
                 conn.commit()
             source_id = self.db_manager.get_source_id("indeed")
+
+        if source_id:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO crawl_logs (
+                        source_id, keyword, area, status,
+                        total_count, new_count, error_message,
+                        started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    source_id,
+                    ','.join(result['keywords']),
+                    ','.join(result['areas']),
+                    'error' if result['error'] else 'success',
+                    result['total_count'],
+                    result['new_count'],
+                    result['error'],
+                    result['started_at'],
+                    result['finished_at'],
+                ))
+                conn.commit()
+
+    async def crawl_baitoru(
+        self,
+        keywords: List[str],
+        areas: List[str],
+        max_pages: int = 3,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        バイトルをクロール
+
+        Args:
+            keywords: 検索キーワードリスト
+            areas: 地域リスト（現在は無視、全国検索）
+            max_pages: 最大ページ数
+            filters: 検索フィルタ
+
+        Returns:
+            クロール結果
+        """
+        result = {
+            'source': 'baitoru',
+            'keywords': keywords,
+            'areas': areas,
+            'started_at': datetime.now(),
+            'finished_at': None,
+            'total_count': 0,
+            'scraped_count': 0,
+            'saved_count': 0,
+            'new_count': 0,
+            'jobs': [],
+            'error': None,
+        }
+
+        try:
+            self._report_progress("バイトル クローリング開始", 0, 1)
+
+            # スクレイパー初期化
+            scraper = BaitoruScraper()
+
+            all_jobs = []
+
+            # キーワードごとにスクレイピング
+            total_keywords = len(keywords)
+            for idx, keyword in enumerate(keywords, 1):
+                self._report_progress(
+                    f"[バイトル] {keyword} を検索中...",
+                    idx,
+                    total_keywords
+                )
+
+                # スクレイピング実行
+                jobs = await scraper.search_jobs(
+                    keyword=keyword,
+                    max_pages=max_pages
+                )
+
+                for job in jobs:
+                    job['keyword'] = keyword
+                    job['area'] = areas[0] if areas else '全国'
+                    all_jobs.append(job)
+
+                logger.info(f"Found {len(jobs)} jobs for keyword: {keyword}")
+
+            result['total_count'] = len(all_jobs)
+            result['scraped_count'] = len(all_jobs)
+            self._report_progress(f"取得完了: {len(all_jobs)}件", 1, 2)
+
+            # デバッグログ出力
+            if DEBUG_JOB_LOG and all_jobs:
+                self._output_debug_job_log(all_jobs)
+
+            # データベースに保存
+            saved_count = 0
+            new_count = 0
+            for job in all_jobs:
+                try:
+                    if job.get('page_url'):
+                        job['page_url'] = self._normalize_url(job['page_url'])
+
+                    job['crawled_at'] = datetime.now()
+                    existing = self._check_existing_baitoru(job)
+                    self.job_repository.save_job(job, "baitoru")
+
+                    saved_count += 1
+                    if not existing:
+                        new_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to save job: {e}")
+
+            result['saved_count'] = saved_count
+            result['new_count'] = new_count
+            result['jobs'] = [self._prepare_baitoru_job_record(job) for job in all_jobs]
+
+            self._report_progress(f"保存完了: {saved_count}件（新着: {new_count}件）", 2, 2)
+            self._save_crawl_log_baitoru(result)
+
+        except Exception as e:
+            result['error'] = str(e)
+            logger.error(f"Baitoru crawl error: {e}", exc_info=True)
+
+        result['finished_at'] = datetime.now()
+        return result
+
+    def _check_existing_baitoru(self, job: Dict[str, Any]) -> bool:
+        """バイトル求人の既存チェック"""
+        source_id = self.db_manager.get_source_id("baitoru")
+        if not source_id:
+            return False
+
+        job_identifier = job.get('job_number')
+        page_url = self._normalize_url(job.get('page_url'))
+
+        if not job_identifier and not page_url:
+            return False
+
+        with self.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM jobs
+                WHERE source_id = ?
+                  AND (job_id = ? OR page_url = ?)
+                LIMIT 1
+                """,
+                (source_id, job_identifier or page_url, page_url or job_identifier)
+            )
+            return cursor.fetchone() is not None
+
+    def _prepare_baitoru_job_record(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        """バイトル用のテーブル表示データ整形"""
+        return {
+            "company_name": job.get("company_name", ""),
+            "job_title": job.get("title", ""),
+            "work_location": job.get("location", ""),
+            "salary": job.get("salary", ""),
+            "employment_type": job.get("employment_type", ""),
+            "page_url": job.get("page_url", ""),
+            "crawled_at": job.get("crawled_at"),
+            "job_type": job.get("job_type", ""),
+            "working_hours": job.get("working_hours", ""),
+            "tags": job.get("tags", ""),
+        }
+
+    def _save_crawl_log_baitoru(self, result: Dict[str, Any]):
+        """バイトルのクロールログを保存"""
+        source_id = self.db_manager.get_source_id("baitoru")
+        if not source_id:
+            # バイトルソースがない場合は作成
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR IGNORE INTO sources (name, url) VALUES (?, ?)",
+                    ("baitoru", "https://www.baitoru.com")
+                )
+                conn.commit()
+            source_id = self.db_manager.get_source_id("baitoru")
 
         if source_id:
             with self.db_manager.get_connection() as conn:
