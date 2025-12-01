@@ -638,10 +638,30 @@ class BaitoruScraper(BaseScraper):
             if qualification_match:
                 detail_data["qualifications"] = qualification_match.group(2).strip()[:300]
 
-            # 掲載日（掲載開始日、更新日などから抽出）
-            published_match = re.search(r"(掲載期間|掲載開始|更新日|登録日)[：:\s]*(\d{4}[/\-年]\d{1,2}[/\-月]\d{1,2})", body_text)
-            if published_match:
-                detail_data["published_date"] = published_match.group(2).replace("年", "/").replace("月", "/")
+            # 掲載日（複数パターン対応）
+            published_patterns = [
+                # 掲載開始日：2025-12-01 形式
+                r"掲載開始日[：:\s]*_?(\d{4}[-/]\d{1,2}[-/]\d{1,2})_?",
+                # 更新日時　2025/12/1（月）16:00 形式
+                r"更新日時[：:\s]*(\d{4}[/\-]\d{1,2}[/\-]\d{1,2})",
+                # 掲載期間：2025/12/01～ 形式
+                r"掲載期間[：:\s]*(\d{4}[/\-年]\d{1,2}[/\-月]\d{1,2})",
+                # 更新日：2025年12月1日 形式
+                r"更新日[：:\s]*(\d{4}年\d{1,2}月\d{1,2}日?)",
+                # 登録日：2025/12/01 形式
+                r"登録日[：:\s]*(\d{4}[/\-]\d{1,2}[/\-]\d{1,2})",
+                # 掲載開始：2025年12月1日 形式
+                r"掲載開始[：:\s]*(\d{4}年\d{1,2}月\d{1,2}日?)",
+            ]
+
+            for pattern in published_patterns:
+                published_match = re.search(pattern, body_text)
+                if published_match:
+                    date_str = published_match.group(1)
+                    # 日付形式を統一（YYYY/MM/DD）
+                    date_str = date_str.replace("年", "/").replace("月", "/").replace("日", "").replace("-", "/")
+                    detail_data["published_date"] = date_str
+                    break
 
             # 求人番号
             job_id_match = re.search(r"(求人番号|お仕事No|原稿ID)[：:\s]*([A-Za-z0-9\-]+)", body_text)
