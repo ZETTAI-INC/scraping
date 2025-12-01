@@ -1096,6 +1096,17 @@ class MainWindow(QMainWindow):
         self.progress_bar.setRange(0, total_combinations)
         self.progress_bar.setValue(0)
         self.time_label.setVisible(True)
+        self.time_label.setStyleSheet("""
+            QLabel {
+                color: #2e7d32;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 5px;
+                background-color: #e8f5e9;
+                border: 1px solid #c8e6c9;
+                border-radius: 4px;
+            }
+        """)
         self.time_label.setText("経過時間: 0秒 | 取得: 0件 | 保存: 0件")
         self.statusBar.showMessage(f"クローリング中... ({', '.join(source_names)} / {len(keywords)}キーワード x {len(areas)}地域)")
 
@@ -1134,6 +1145,20 @@ class MainWindow(QMainWindow):
         time_str = self._format_elapsed_time(elapsed_time)
         count_for_avg = saved_count if saved_count > 0 else scraped_count
 
+        # 抽出件数をnew_count_labelにリアルタイム表示
+        self.new_count_label.setText(f"抽出中... {scraped_count} 件取得済み")
+        self.new_count_label.setStyleSheet("""
+            QLabel {
+                color: #1565c0;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px;
+                background-color: #e3f2fd;
+                border: 2px solid #1976d2;
+                border-radius: 6px;
+            }
+        """)
+
         # 一件当たりの平均取得時間を計算
         if count_for_avg > 0:
             avg_time = elapsed_time / count_for_avg
@@ -1154,6 +1179,7 @@ class MainWindow(QMainWindow):
         self.stop_btn.setText("停止")
         self.progress_label.setVisible(False)
         self.progress_bar.setVisible(False)
+        self.time_label.setVisible(False)  # 完了時は非表示（他の情報と重複するため）
 
         # 最終クローリング日時を更新
         now = datetime.now()
@@ -1164,9 +1190,10 @@ class MainWindow(QMainWindow):
         scraped_count = result.get('scraped_count', result.get('total_count', 0))
         saved_count = result.get('saved_count', scraped_count)
         new_count = result.get('new_count', 0)
+        time_str = self._format_elapsed_time(elapsed_time)
 
-        # 新規取得件数ラベルを更新（目立つ表示）
-        self.new_count_label.setText(f"今回の新規取得：{new_count} 件（抽出：{scraped_count} 件）")
+        # 新規取得件数ラベルを更新（目立つ表示）- 所要時間も含める
+        self.new_count_label.setText(f"今回の新規取得：{new_count} 件（抽出：{scraped_count} 件 / {time_str}）")
         # 新規が0件なら灰色、あれば緑色に
         if new_count > 0:
             self.new_count_label.setStyleSheet("""
@@ -1192,35 +1219,6 @@ class MainWindow(QMainWindow):
                     border-radius: 6px;
                 }
             """)
-
-        time_str = self._format_elapsed_time(elapsed_time)
-        count_for_avg = saved_count if saved_count > 0 else scraped_count
-
-        # 一件当たりの平均取得時間を計算
-        if count_for_avg > 0:
-            avg_time = elapsed_time / count_for_avg
-            if avg_time < 1:
-                avg_str = f"{avg_time * 1000:.0f}ms"
-            else:
-                avg_str = f"{avg_time:.2f}秒"
-            self.time_label.setText(
-                f"完了 | 総時間: {time_str} | 取得: {scraped_count}件 | 保存: {saved_count}件 (新規: {new_count}件) | 平均: {avg_str}/件"
-            )
-        else:
-            self.time_label.setText(f"完了 | 総時間: {time_str} | 取得: 0件 | 保存: 0件")
-
-        # 完了時のスタイルを変更（緑系）
-        self.time_label.setStyleSheet("""
-            QLabel {
-                color: #1b5e20;
-                font-weight: bold;
-                font-size: 12px;
-                padding: 5px;
-                background-color: #c8e6c9;
-                border: 1px solid #a5d6a7;
-                border-radius: 4px;
-            }
-        """)
 
         # 今回のスクレイピング結果のみを表示（過去のDB結果は含めない）
         jobs = result.get('jobs', [])
