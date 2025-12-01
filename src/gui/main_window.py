@@ -919,7 +919,7 @@ class MainWindow(QMainWindow):
         plt.rcParams['font.family'] = ['MS Gothic', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', 'sans-serif']
 
         x = np.arange(len(sorted_dates))
-        width = 0.35
+        width = 0.12  # 棒の幅を1/3に
 
         bars1 = ax.bar(x - width/2, new_counts, width, label='新規取得', color='#4caf50', alpha=0.8)
         bars2 = ax.bar(x + width/2, total_counts, width, label='総抽出', color='#2196f3', alpha=0.6)
