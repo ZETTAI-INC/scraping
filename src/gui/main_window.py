@@ -899,7 +899,6 @@ class MainWindow(QMainWindow):
         # データを抽出
         labels = [row['label'] for row in crawl_data]
         new_counts = [row['new_count'] for row in crawl_data]
-        total_counts = [row['total_count'] for row in crawl_data]
 
         # グラフ描画
         self.analysis_figure.clear()
@@ -909,10 +908,9 @@ class MainWindow(QMainWindow):
         plt.rcParams['font.family'] = ['Yu Gothic', 'MS Gothic', 'Meiryo', 'sans-serif']
 
         x = np.arange(len(labels))
-        width = 0.12
+        width = 0.5
 
-        bars1 = ax.bar(x - width/2, new_counts, width, label='新規取得', color='#4caf50', alpha=0.8)
-        bars2 = ax.bar(x + width/2, total_counts, width, label='総抽出', color='#2196f3', alpha=0.6)
+        bars = ax.bar(x, new_counts, width, label='新規取得', color='#4caf50', alpha=0.8)
 
         ax.set_xlabel('実行回')
         ax.set_ylabel('件数')
@@ -927,10 +925,9 @@ class MainWindow(QMainWindow):
             display_labels = labels
 
         ax.set_xticklabels(display_labels, rotation=45, ha='right', fontsize=8)
-        ax.legend()
 
         # 値をバーの上に表示
-        for bar, cnt in zip(bars1, new_counts):
+        for bar, cnt in zip(bars, new_counts):
             if cnt > 0:
                 ax.annotate(f'{cnt}',
                            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
@@ -943,7 +940,6 @@ class MainWindow(QMainWindow):
 
         # サマリー更新
         total_new = sum(new_counts)
-        total_extracted = sum(total_counts)
         avg_new = total_new / len(new_counts) if new_counts else 0
         max_new = max(new_counts) if new_counts else 0
         max_idx = new_counts.index(max_new) if new_counts and max_new > 0 else -1
@@ -951,7 +947,7 @@ class MainWindow(QMainWindow):
 
         self.analysis_summary_label.setText(
             f"表示: {len(crawl_data)}回分 | "
-            f"累計新規: {total_new:,}件 | 累計抽出: {total_extracted:,}件 | "
+            f"累計新規: {total_new:,}件 | "
             f"平均新規: {avg_new:.1f}件/回 | 最大新規: {max_new}件 ({max_label})"
         )
 
