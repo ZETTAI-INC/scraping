@@ -1219,6 +1219,12 @@ class CrawlService:
         # 仕事内容: 詳細ページ・一覧ページ両方で job_description
         job_description = job.get("job_description", "")
 
+        # 電話番号: 詳細ページから取得
+        phone_number = job.get("phone_number", "")
+
+        # 掲載日: 詳細ページの posted_date（受付年月日）
+        posted_date = job.get("posted_date", "")
+
         return {
             "source_display_name": "ハローワーク",
             "job_id": job.get("job_id", job.get("job_number", "")),
@@ -1235,14 +1241,15 @@ class CrawlService:
             "crawled_at": job.get("crawled_at"),
             "working_hours": job.get("working_hours", ""),
             "holidays": job.get("holidays", ""),
-            "phone": "",
-            "phone_number": "",
+            "phone": phone_number,
+            "phone_number": phone_number,
             "business_content": job_description,
             "job_description": job_description,
             "requirements": job.get("required_experience", ""),
             "required_license": job.get("required_license", ""),
             "education": job.get("education", ""),
             "age_limit": job.get("age_limit", ""),
+            "posted_date": posted_date,
         }
 
     def _save_crawl_log_hellowork(self, result: Dict[str, Any]):

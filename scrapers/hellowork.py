@@ -1094,7 +1094,29 @@ class HelloworkScraper(BaseScraper):
             if job_no_match:
                 detail["job_number"] = job_no_match.group(1)
 
-            # セクションごとに情報を抽出
+            # テーブルセルから値を取得するヘルパー関数
+            async def extract_table_cell(row_label: str) -> str:
+                """テーブルの行ラベルから値を取得"""
+                try:
+                    # th/td構造のテーブルから取得
+                    selectors = [
+                        f'th:has-text("{row_label}") + td',
+                        f'td:has-text("{row_label}") + td',
+                        f'tr:has-text("{row_label}") td:last-child',
+                    ]
+                    for selector in selectors:
+                        try:
+                            elem = page.locator(selector).first
+                            if await elem.count() > 0:
+                                text = await elem.inner_text()
+                                return text.strip()
+                        except:
+                            continue
+                except Exception as e:
+                    self.logger.debug(f"テーブルセル抽出エラー ({row_label}): {e}")
+                return ""
+
+            # セクションごとに情報を抽出（従来のフォールバック）
             async def extract_section(label: str) -> str:
                 try:
                     selectors = [
@@ -1148,19 +1170,78 @@ class HelloworkScraper(BaseScraper):
                 elif "契約社員" in body_text:
                     detail["employment_type"] = "契約社員"
 
-            # 賃金・給与
-            salary_match = re.search(r'(\d{2,3},?\d{3}円?[〜～\-]\d{2,3},?\d{3}円?)', body_text)
-            if salary_match:
-                detail["salary"] = salary_match.group(1)
-            else:
-                detail["salary"] = await extract_section("賃金")
+            # ===== 賃金（a + b または a + b + c）=====
+            # まず「a + b + c」を試す（固定残業代あり）
+            salary = ""
+            salary_patterns = [
+                r'[aａ]\s*[+＋]\s*[bｂ]\s*[+＋]\s*[cｃ][）\)]*[\s\n]*([^\n]+)',  # a + b + c
+                r'[aａ]\s*[+＋]\s*[bｂ][）\)]*[\s\n]*([^\n]+)',  # a + b
+            ]
+            for pattern in salary_patterns:
+                match = re.search(pattern, body_text, re.IGNORECASE)
+                if match:
+                    salary = match.group(1).strip()
+                    break
 
-            # 就業場所・勤務地
-            detail["work_location"] = await extract_section("就業場所")
-            if not detail["work_location"]:
+            # フォールバック：従来の正規表現
+            if not salary:
+                salary_match = re.search(r'(\d{2,3},?\d{3}円?[〜～\-～]\d{2,3},?\d{3}円?)', body_text)
+                if salary_match:
+                    salary = salary_match.group(1)
+
+            if not salary:
+                salary = await extract_section("賃金")
+
+            detail["salary"] = salary
+
+            # ===== 就業場所（住所）=====
+            location = await extract_table_cell("就業場所")
+            if not location:
+                location = await extract_section("就業場所")
+            if not location:
                 match = re.search(r'就業場所[:\s]*([^\n]+(?:\n[^\n▼■]+)*)', body_text)
                 if match:
-                    detail["work_location"] = match.group(1).strip()[:300]
+                    location = match.group(1).strip()[:300]
+            detail["work_location"] = location
+            detail["location"] = location  # 住所フィールドとしても保存
+
+            # ===== 電話番号（担当者テーブルから）=====
+            phone = ""
+            # 担当者セクションの電話番号を探す
+            phone_patterns = [
+                r'電話番号[:\s]*([0-9０-９\-－ー（）\(\)]+)',
+                r'TEL[:\s]*([0-9０-９\-－ー（）\(\)]+)',
+            ]
+            for pattern in phone_patterns:
+                match = re.search(pattern, body_text)
+                if match:
+                    phone = match.group(1).strip()
+                    # 全角数字を半角に変換
+                    phone = phone.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+                    break
+
+            if not phone:
+                phone = await extract_table_cell("電話番号")
+
+            detail["phone_number"] = phone
+
+            # ===== 掲載日（受付年月日）=====
+            posted_date = ""
+            date_patterns = [
+                r'受付年月日[:\s]*(\d{4}[年/]\d{1,2}[月/]\d{1,2}日?)',
+                r'受付日[:\s]*(\d{4}[年/]\d{1,2}[月/]\d{1,2}日?)',
+                r'公開日[:\s]*(\d{4}[年/]\d{1,2}[月/]\d{1,2}日?)',
+            ]
+            for pattern in date_patterns:
+                match = re.search(pattern, body_text)
+                if match:
+                    posted_date = match.group(1).strip()
+                    break
+
+            if not posted_date:
+                posted_date = await extract_table_cell("受付年月日")
+
+            detail["posted_date"] = posted_date
 
             # 就業時間
             detail["working_hours"] = await extract_section("就業時間")
@@ -1200,7 +1281,7 @@ class HelloworkScraper(BaseScraper):
             if age_match:
                 detail["age_limit"] = age_match.group(1)
 
-            self.logger.info(f"詳細取得成功: 会社名={detail.get('company_name', '')[:20]}, 職種={detail.get('job_title', '')[:20]}")
+            self.logger.info(f"詳細取得成功: 会社名={detail.get('company_name', '')[:20]}, 賃金={detail.get('salary', '')[:20]}, 電話={detail.get('phone_number', '')}")
 
         except PlaywrightTimeout as e:
             self.logger.error(f"詳細取得タイムアウト: {e}")
