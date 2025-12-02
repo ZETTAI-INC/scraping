@@ -89,6 +89,8 @@ class CrawlWorker(QThread):
                 'total_count': 0,
                 'new_count': 0,
                 'saved_count': 0,
+                'duplicate_count': 0,
+                'existing_count': 0,
                 'jobs': [],
                 'error': None,
             }
@@ -147,6 +149,8 @@ class CrawlWorker(QThread):
                         all_results['scraped_count'] += result.get('scraped_count', result.get('total_count', 0))
                         all_results['new_count'] += result.get('new_count', 0)
                         all_results['saved_count'] += result.get('saved_count', 0)
+                        all_results['duplicate_count'] += result.get('duplicate_count', 0)
+                        all_results['existing_count'] += result.get('existing_count', 0)
                         all_results['jobs'].extend(result.get('jobs', []))
                         if result.get('error'):
                             all_results['error'] = result['error']
@@ -1025,6 +1029,16 @@ class MainWindow(QMainWindow):
                 lines.append(
                     f"今回: 取得 {run.get('scraped_count', 0):,} 件 / 保存 {run.get('saved_count', 0):,} 件 (新規 {run.get('new_count', 0):,} 件)"
                 )
+                # スキップ情報
+                dup = run.get('duplicate_count', 0)
+                exist = run.get('existing_count', 0)
+                if dup > 0 or exist > 0:
+                    skip_parts = []
+                    if exist > 0:
+                        skip_parts.append(f"既存{exist}")
+                    if dup > 0:
+                        skip_parts.append(f"重複{dup}")
+                    lines.append(f"      スキップ: {'+'.join(skip_parts)} 件")
                 elapsed = run.get('elapsed_time') or 0
                 lines.append(f"      所要時間: {self._format_elapsed_time(elapsed)}")
 
@@ -1198,10 +1212,22 @@ class MainWindow(QMainWindow):
         scraped_count = result.get('scraped_count', result.get('total_count', 0))
         saved_count = result.get('saved_count', scraped_count)
         new_count = result.get('new_count', 0)
+        duplicate_count = result.get('duplicate_count', 0)
+        existing_count = result.get('existing_count', 0)
         time_str = self._format_elapsed_time(elapsed_time)
 
+        # スキップ情報のテキスト作成
+        skip_info = ""
+        if existing_count > 0 or duplicate_count > 0:
+            skip_parts = []
+            if existing_count > 0:
+                skip_parts.append(f"既存{existing_count}")
+            if duplicate_count > 0:
+                skip_parts.append(f"重複{duplicate_count}")
+            skip_info = f"（スキップ: {'+'.join(skip_parts)}件）"
+
         # 新規取得件数ラベルを更新（目立つ表示）- 所要時間も含める
-        self.new_count_label.setText(f"今回の新規取得：{new_count} 件（抽出：{scraped_count} 件 / {time_str}）")
+        self.new_count_label.setText(f"今回の新規取得：{new_count} 件（抽出：{scraped_count} 件 / {time_str}）{skip_info}")
         # 新規が0件なら灰色、あれば緑色に
         if new_count > 0:
             self.new_count_label.setStyleSheet("""
@@ -1236,6 +1262,8 @@ class MainWindow(QMainWindow):
             'scraped_count': scraped_count,
             'saved_count': saved_count,
             'new_count': new_count,
+            'duplicate_count': duplicate_count,
+            'existing_count': existing_count,
             'elapsed_time': elapsed_time,
         })
 

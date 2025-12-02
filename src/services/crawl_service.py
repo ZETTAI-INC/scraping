@@ -172,6 +172,8 @@ class CrawlService:
             'scraped_count': 0,  # 生の取得件数
             'saved_count': 0,
             'new_count': 0,
+            'duplicate_count': 0,  # 重複スキップ件数
+            'existing_count': 0,  # DB既存スキップ件数
             'jobs': [],  # 今回取得した求人（UI表示用）
             'error': None,
         }
@@ -237,6 +239,10 @@ class CrawlService:
                     logger.info(f"DB既存求人をスキップ: {existing_count}件")
                 if duplicate_count > 0:
                     logger.info(f"重複求人をスキップ: {duplicate_count}件（ユニーク: {len(unique_jobs)}件）")
+
+                # 結果に重複件数を記録
+                result['duplicate_count'] = duplicate_count
+                result['existing_count'] = existing_count
 
                 self._report_progress(f"詳細情報取得中（{len(unique_jobs)}件）...", 2, 3)
 
@@ -610,6 +616,8 @@ class CrawlService:
             'scraped_count': 0,
             'saved_count': 0,
             'new_count': 0,
+            'duplicate_count': 0,  # 重複スキップ件数
+            'existing_count': 0,  # DB既存スキップ件数
             'jobs': [],
             'error': None,
         }
@@ -626,6 +634,7 @@ class CrawlService:
             all_jobs = []
             seen_job_ids = set()  # 重複防止用のjob_idセット
             total_raw_count = 0  # 重複を含む生の取得件数
+            total_existing_count = 0  # DB既存スキップ件数の合計
 
             # DBから既存のjob_idを取得（詳細取得スキップ用）
             existing_job_ids = self._get_existing_baitoru_job_ids()
@@ -740,6 +749,7 @@ class CrawlService:
                                 job_id = job.get('job_id') or job.get('job_number')
                                 if job_id and job_id in existing_job_ids:
                                     skipped_existing_count += 1
+                                    total_existing_count += 1
                                     logger.debug(f"Skipped existing job (in DB): {job_id}")
                                     # 既存求人もリストには追加（DB更新用）
                                     all_jobs.append(job)
@@ -819,6 +829,7 @@ class CrawlService:
 
             result['saved_count'] = saved_count
             result['new_count'] = new_count
+            result['existing_count'] = total_existing_count
             result['jobs'] = [self._prepare_baitoru_job_record(job) for job in all_jobs]
 
             self._report_progress(f"保存完了: {saved_count}件（新着: {new_count}件）", 2, 2)
