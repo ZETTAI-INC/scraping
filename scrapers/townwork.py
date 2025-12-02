@@ -22,6 +22,35 @@ class TownworkScraper(BaseScraper):
 
     def __init__(self):
         super().__init__(site_name="townwork")
+        # 現在検索中のカテゴリパス（PR除外用）
+        self._current_category_path: Optional[str] = None
+        # 現在検索中のエリア（PR除外用）
+        self._current_search_area: Optional[str] = None
+
+    def set_search_category(self, keyword: str) -> None:
+        """
+        検索キーワードに対応するカテゴリパスを設定
+        並列処理前に呼び出すことで、全タスクで同じカテゴリ判定ができる
+        """
+        job_categories = self.site_config.get("job_categories", {})
+        self._current_category_path = job_categories.get(keyword)
+
+    def _get_prefecture_from_area(self, area: str) -> str:
+        """
+        エリア名から都道府県名を取得
+        例: "東京" -> "東京都", "大阪" -> "大阪府"
+        """
+        # 都道府県の正式名称マッピング
+        prefecture_map = {
+            "北海道": "北海道",
+            "東京": "東京都",
+            "大阪": "大阪府",
+            "京都": "京都府",
+        }
+        # 上記以外は「県」を付ける
+        if area in prefecture_map:
+            return prefecture_map[area]
+        return area + "県" if not area.endswith(("都", "府", "県", "道")) else area
 
     async def extract_job_card(self, card_element, page: Page) -> Dict[str, Any]:
         """
@@ -160,6 +189,104 @@ class TownworkScraper(BaseScraper):
 
         return search_result_cards
 
+    # 全都道府県リスト（エリア判定用）
+    ALL_PREFECTURES = [
+        "北海道",
+        "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
+        "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
+        "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県",
+        "岐阜県", "静岡県", "愛知県", "三重県",
+        "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
+        "鳥取県", "島根県", "岡山県", "広島県", "山口県",
+        "徳島県", "香川県", "愛媛県", "高知県",
+        "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県",
+    ]
+
+    def _extract_prefecture_from_text(self, text: str) -> Optional[str]:
+        """
+        テキストから都道府県名を抽出
+        最初に見つかった都道府県名を返す
+        """
+        for pref in self.ALL_PREFECTURES:
+            if pref in text:
+                return pref
+            # 「県」「府」「都」なしの短縮形もチェック
+            short_name = pref.rstrip("都府県")
+            if short_name != "北海道" and short_name in text:
+                # 短縮形の場合は完全一致に近い形でチェック（「東京」が「東京都」の一部として出現）
+                return pref
+        return None
+
+    async def _is_matching_area(self, page: Page) -> bool:
+        """
+        詳細ページの勤務地が検索エリアと一致するかをチェック
+
+        PR案件は検索エリアと異なる都道府県の求人が表示されることがあるため、
+        勤務地に明示的に異なる都道府県が記載されている場合のみ除外する。
+        都道府県名が記載されていない場合は許可する（誤除外を防ぐ）。
+        """
+        if not self._current_search_area:
+            return True
+
+        # 検索エリアの都道府県名を取得
+        search_prefecture = self._get_prefecture_from_area(self._current_search_area)
+
+        try:
+            # 詳細ページから勤務地情報を取得
+            # 複数のセレクタを試す
+            location_selectors = [
+                "[class*='accessText']",
+                "[class*='locationText']",
+                "[class*='workLocation']",
+                "[class*='address']",
+            ]
+
+            location_text = ""
+            for selector in location_selectors:
+                location_elem = await page.query_selector(selector)
+                if location_elem:
+                    location_text = await location_elem.inner_text()
+                    if location_text:
+                        break
+
+            # 勤務地が取得できない場合はページ全体から探す
+            if not location_text:
+                body_text = await page.inner_text("body")
+                # 勤務地セクションを探す
+                location_match = re.search(r"勤務地[：:\s]*(.+?)(?=\n|給与|時給|月給)", body_text)
+                if location_match:
+                    location_text = location_match.group(1)
+
+            if not location_text:
+                # 勤務地が取得できない場合は許可（誤除外を防ぐ）
+                return True
+
+            # 勤務地から都道府県名を抽出
+            found_prefecture = self._extract_prefecture_from_text(location_text)
+
+            if not found_prefecture:
+                # 都道府県名が記載されていない場合は許可（駅名や市区町村のみの記載）
+                logger.debug(f"都道府県名なし、許可: {location_text[:50]}")
+                return True
+
+            # 検索エリアの都道府県と一致するかチェック
+            if found_prefecture == search_prefecture:
+                return True
+
+            # 短縮形での一致もチェック（「東京」で検索して「東京都」が見つかった場合など）
+            search_short = self._current_search_area
+            found_short = found_prefecture.rstrip("都府県")
+            if search_short == found_short or search_short == found_prefecture:
+                return True
+
+            # 明示的に異なる都道府県が記載されている場合のみ除外
+            logger.info(f"エリア不一致で除外: 検索={search_prefecture}, 勤務地={found_prefecture} ({location_text[:50]})")
+            return False
+
+        except Exception as e:
+            logger.warning(f"エリア判定エラー: {e}")
+            return True  # エラー時は許可
+
     def generate_search_url(self, keyword: str, area: str, page: int = 1) -> str:
         """
         タウンワーク用の検索URL生成
@@ -176,6 +303,10 @@ class TownworkScraper(BaseScraper):
         # 職種カテゴリが存在するかチェック
         job_categories = self.site_config.get("job_categories", {})
         category_path = job_categories.get(keyword)
+
+        # 現在検索中のカテゴリパスとエリアを保存（PR除外用）
+        self._current_category_path = category_path
+        self._current_search_area = area
 
         if category_path:
             # 職種カテゴリ形式のURL
@@ -361,6 +492,7 @@ class TownworkScraper(BaseScraper):
                 logger.debug(f"Skipping job with empty location: {data.get('page_url', 'N/A')}")
                 return None
 
+
             return data if data.get("page_url") else None
 
         except Exception as e:
@@ -392,12 +524,19 @@ class TownworkScraper(BaseScraper):
         - 求人番号
         - 事業内容
         - 従業員数
+
+        カテゴリ不一致の場合は{"_skip": True}を返す
         """
         detail_data = {}
 
         try:
             await page.goto(url, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(2000)
+
+            # エリアマッチングチェック（PR案件除外）
+            # 検索エリアと勤務地の都道府県が一致しない場合はPR案件として除外
+            if not await self._is_matching_area(page):
+                return {"_skip": True}
 
             # ページ全体のテキストを取得して解析
             body_text = await page.inner_text("body")
@@ -492,17 +631,33 @@ class TownworkScraper(BaseScraper):
             return jobs
 
         # 各求人の詳細情報を取得
+        filtered_jobs = []
+        skipped_count = 0
+
         for i, job in enumerate(jobs):
             if job.get("page_url"):
                 logger.info(f"Fetching detail {i+1}/{len(jobs)}: {job['page_url']}")
                 try:
                     detail_data = await self.extract_detail_info(page, job["page_url"])
+
+                    # PR案件（カテゴリ不一致）の場合はスキップ
+                    if detail_data.get("_skip"):
+                        skipped_count += 1
+                        continue
+
                     job.update(detail_data)
+                    filtered_jobs.append(job)
                     await page.wait_for_timeout(1000)  # サーバーに負荷をかけないよう待機
                 except Exception as e:
                     logger.error(f"Error fetching detail for job {i+1}: {e}")
+                    filtered_jobs.append(job)  # エラー時は除外しない
+            else:
+                filtered_jobs.append(job)
 
-        return jobs
+        if skipped_count > 0:
+            logger.info(f"PR案件除外: {skipped_count}件をカテゴリ不一致として除外")
+
+        return filtered_jobs
 
     async def scrape_single_page(
         self,

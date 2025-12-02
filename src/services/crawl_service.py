@@ -182,6 +182,10 @@ class CrawlService:
             # スクレイパー初期化
             scraper = TownworkScraper()
 
+            # DBから既存のjob_idを取得（詳細取得スキップ用）
+            existing_job_ids = self._get_existing_townwork_job_ids()
+            logger.info(f"DB内の既存job_id数: {len(existing_job_ids)}")
+
             # スクレイピング実行
             jobs = await scraper.scrape(
                 keywords=keywords,
@@ -201,10 +205,17 @@ class CrawlService:
                 seen_job_ids = set()
                 unique_jobs = []
                 duplicate_count = 0
+                existing_count = 0
 
                 for job in jobs:
                     job_id = job.get('job_number') or job.get('job_id')
                     job_url = job.get('page_url') or job.get('url')
+
+                    # DB既存チェック（job_idがDBにあれば詳細取得をスキップ）
+                    if job_id and job_id in existing_job_ids:
+                        existing_count += 1
+                        logger.debug(f"Skipped existing job (in DB): {job_id}")
+                        continue
 
                     # job_idがある場合は重複チェック
                     if job_id:
@@ -222,6 +233,8 @@ class CrawlService:
 
                     unique_jobs.append(job)
 
+                if existing_count > 0:
+                    logger.info(f"DB既存求人をスキップ: {existing_count}件")
                 if duplicate_count > 0:
                     logger.info(f"重複求人をスキップ: {duplicate_count}件（ユニーク: {len(unique_jobs)}件）")
 
@@ -614,6 +627,10 @@ class CrawlService:
             seen_job_ids = set()  # 重複防止用のjob_idセット
             total_raw_count = 0  # 重複を含む生の取得件数
 
+            # DBから既存のjob_idを取得（詳細取得スキップ用）
+            existing_job_ids = self._get_existing_baitoru_job_ids()
+            logger.info(f"DB内の既存job_id数: {len(existing_job_ids)}")
+
             # 並列詳細取得用のヘルパー関数
             async def fetch_detail_parallel(pages: list, jobs_to_fetch: list, scraper_instance, total_scraped: int):
                 """2ページを使って並列で詳細取得"""
@@ -711,12 +728,22 @@ class CrawlService:
                             enable_dispatch_filter = filters.get('enable_dispatch_keyword', True) if filters else True
                             dispatch_keywords = ['派遣', '派遣社員', '無期雇用派遣', '登録型派遣']
 
-                            # 派遣フィルタを適用して詳細取得対象を絞り込み
+                            # 派遣フィルタ・DB既存チェックを適用して詳細取得対象を絞り込み
                             jobs_to_fetch = []
                             skipped_dispatch_count = 0
+                            skipped_existing_count = 0
                             for job in jobs:
                                 job['keyword'] = keyword
                                 job['area'] = area
+
+                                # DB既存チェック（job_idがDBにあれば詳細取得をスキップ）
+                                job_id = job.get('job_id') or job.get('job_number')
+                                if job_id and job_id in existing_job_ids:
+                                    skipped_existing_count += 1
+                                    logger.debug(f"Skipped existing job (in DB): {job_id}")
+                                    # 既存求人もリストには追加（DB更新用）
+                                    all_jobs.append(job)
+                                    continue
 
                                 if enable_dispatch_filter:
                                     employment_type = job.get('employment_type', '') or ''
@@ -733,6 +760,8 @@ class CrawlService:
 
                                 jobs_to_fetch.append(job)
 
+                            if skipped_existing_count > 0:
+                                logger.info(f"Skipped {skipped_existing_count} existing jobs (already in DB)")
                             if skipped_dispatch_count > 0:
                                 logger.info(f"Skipped {skipped_dispatch_count} dispatch jobs before detail fetch")
 
@@ -801,6 +830,34 @@ class CrawlService:
 
         result['finished_at'] = datetime.now()
         return result
+
+    def _get_existing_baitoru_job_ids(self) -> set:
+        """DBからバイトルの既存job_idをすべて取得"""
+        source_id = self.db_manager.get_source_id("baitoru")
+        if not source_id:
+            return set()
+
+        existing_ids = set()
+        with self.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT job_id
+                FROM jobs
+                WHERE source_id = ? AND job_id IS NOT NULL AND job_id != ''
+                """,
+                (source_id,)
+            )
+            for row in cursor.fetchall():
+                if row[0]:
+                    existing_ids.add(row[0])
+                    # job123456形式とjob無し形式の両方を追加
+                    if row[0].startswith('job'):
+                        existing_ids.add(row[0].replace('job', ''))
+                    else:
+                        existing_ids.add(f"job{row[0]}")
+
+        return existing_ids
 
     def _check_existing_baitoru(self, job: Dict[str, Any]) -> bool:
         """バイトル求人の既存チェック"""
@@ -896,6 +953,29 @@ class CrawlService:
                 ))
                 conn.commit()
 
+    def _get_existing_townwork_job_ids(self) -> set:
+        """DBからタウンワークの既存job_idをすべて取得"""
+        source_id = self.db_manager.get_source_id("townwork")
+        if not source_id:
+            return set()
+
+        existing_ids = set()
+        with self.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT job_id
+                FROM jobs
+                WHERE source_id = ? AND job_id IS NOT NULL AND job_id != ''
+                """,
+                (source_id,)
+            )
+            for row in cursor.fetchall():
+                if row[0]:
+                    existing_ids.add(row[0])
+
+        return existing_ids
+
     def _check_existing(self, job: Dict[str, Any]) -> bool:
         """既存の求人かチェック"""
         source_id = self.db_manager.get_source_id("townwork")
@@ -944,20 +1024,31 @@ class CrawlService:
         return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
 
     def _prepare_job_record(self, job: Dict[str, Any]) -> Dict[str, Any]:
-        """テーブル表示用にキーを正規化"""
+        """テーブル表示用にキーを正規化（タウンワーク用）"""
         return {
+            "source_display_name": "タウンワーク",
+            "job_id": job.get("job_number") or job.get("job_id", ""),
             "company_name": job.get("company_name") or job.get("company", ""),
             "job_title": job.get("job_title") or job.get("title", ""),
             "work_location": job.get("work_location") or job.get("location", ""),
+            "address": job.get("address", ""),
+            "address_pref": job.get("address", ""),
+            "postal_code": job.get("postal_code", ""),
             "salary": job.get("salary", ""),
             "employment_type": job.get("employment_type", ""),
             "page_url": job.get("page_url") or job.get("url", ""),
             "crawled_at": job.get("crawled_at"),
-            # 詳細ページから取得する追加フィールド
-            "address": job.get("address", ""),
+            # 電話番号
             "phone": job.get("phone", ""),
+            "phone_number": job.get("phone", ""),
+            "phone_number_normalized": job.get("phone_number_normalized", job.get("phone", "")),
+            # 詳細ページから取得する追加フィールド
             "business_content": job.get("business_content", ""),
+            "business_description": job.get("business_content", ""),
             "job_description": job.get("job_description", ""),
+            "working_hours": job.get("working_hours", ""),
+            "holidays": job.get("holidays", ""),
+            "requirements": job.get("qualifications", ""),
             "published_date": job.get("published_date", ""),
         }
 

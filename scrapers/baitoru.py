@@ -801,25 +801,52 @@ class BaitoruScraper(BaseScraper):
         return detail_data
 
     async def scrape_with_details(self, page: Page, keyword: str, area: str,
-                                   max_pages: int = 5, fetch_details: bool = True) -> List[Dict[str, Any]]:
+                                   max_pages: int = 5, fetch_details: bool = True,
+                                   seen_job_ids: set = None) -> List[Dict[str, Any]]:
         """
         求人検索と詳細情報取得を実行
+
+        Args:
+            seen_job_ids: 既に取得済みのjob_idのセット（重複時は詳細取得をスキップ）
         """
-        result = await self.search_jobs(page, keyword, area, max_pages)
+        result = await self.search_jobs(page, keyword, area, max_pages, seen_job_ids=seen_job_ids)
         jobs = result['jobs']
 
         if not fetch_details:
             return jobs
 
+        # 詳細取得済みのjob_idを追跡
+        if seen_job_ids is None:
+            seen_job_ids = set()
+
+        skipped_count = 0
+        fetched_count = 0
+
         for i, job in enumerate(jobs):
             if job.get("page_url"):
-                logger.info(f"Fetching detail {i+1}/{len(jobs)}: {job['page_url']}")
+                job_id = job.get("job_id")
+
+                # job_idで重複チェック（詳細取得前に確認）
+                if job_id and job_id in seen_job_ids:
+                    skipped_count += 1
+                    logger.debug(f"Skipped duplicate job detail: {job_id}")
+                    continue
+
+                # 新規job_idを記録
+                if job_id:
+                    seen_job_ids.add(job_id)
+
+                logger.info(f"Fetching detail {fetched_count+1}/{len(jobs)}: {job['page_url']}")
                 try:
                     detail_data = await self.extract_detail_info(page, job["page_url"])
                     job.update(detail_data)
+                    fetched_count += 1
                     await page.wait_for_timeout(1000)
                 except Exception as e:
                     logger.error(f"Error fetching detail for job {i+1}: {e}")
+
+        if skipped_count > 0:
+            logger.info(f"詳細取得スキップ: {skipped_count}件（重複job_id）")
 
         return jobs
 
