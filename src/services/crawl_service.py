@@ -1276,6 +1276,14 @@ class CrawlService:
         # 電話番号: 詳細ページから取得
         phone_number = job.get("phone_number", "")
 
+        # 電話番号の正規化（数字のみ抽出）
+        phone_normalized = ""
+        if phone_number:
+            # 全角数字を半角に変換
+            phone_normalized = phone_number.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+            # 数字以外を除去
+            phone_normalized = ''.join(c for c in phone_normalized if c.isdigit())
+
         # 掲載日: 詳細ページの posted_date（受付年月日）
         posted_date = job.get("posted_date", "")
 
@@ -1297,6 +1305,7 @@ class CrawlService:
             "holidays": job.get("holidays", ""),
             "phone": phone_number,
             "phone_number": phone_number,
+            "phone_number_normalized": phone_normalized,
             "business_content": job_description,
             "job_description": job_description,
             "requirements": job.get("required_experience", ""),
