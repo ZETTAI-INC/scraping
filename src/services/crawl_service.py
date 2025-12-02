@@ -1297,7 +1297,7 @@ class CrawlService:
             "job_title": job_title,
             "work_location": work_location,
             "address": company_address or work_location,
-            "address_pref": job.get("area", ""),
+            "address_pref": company_address,  # 住所1: 所在地テーブルの値
             "postal_code": "",
             "salary": salary,
             "salary_detail": salary,
