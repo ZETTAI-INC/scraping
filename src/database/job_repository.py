@@ -4,7 +4,7 @@
 """
 import sqlite3
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 import re
 import logging
 from urllib.parse import urlparse, urlunparse
@@ -21,8 +21,12 @@ class JobRepository:
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
 
-    def save_job(self, job_data: Dict[str, Any], source_name: str) -> int:
-        """求人情報を保存（UPSERT）"""
+    def save_job(self, job_data: Dict[str, Any], source_name: str) -> Tuple[int, bool]:
+        """求人情報を保存（UPSERT）
+
+        Returns:
+            Tuple[int, bool]: (job_id, is_new) - 保存されたジョブのIDと新規かどうかのフラグ
+        """
         source_id = self.db.get_source_id(source_name)
         if not source_id:
             raise ValueError(f"Unknown source: {source_name}")
@@ -116,6 +120,7 @@ class JobRepository:
                     existing['id']
                 ))
                 job_id = existing['id']
+                is_new = False
             else:
                 # 新規挿入
                 cursor.execute("""
@@ -162,9 +167,10 @@ class JobRepository:
                     True
                 ))
                 job_id = cursor.lastrowid
+                is_new = True
 
             conn.commit()
-            return job_id
+            return job_id, is_new
 
     def save_jobs_bulk(self, jobs_data: List[Dict[str, Any]], source_name: str) -> int:
         """複数の求人情報を一括保存"""

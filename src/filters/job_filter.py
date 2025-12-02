@@ -67,15 +67,21 @@ class JobFilter:
         "ランスタッド",
     ]
 
-    # 除外業界
+    # 除外業界（より厳密なパターンで判定）
+    # 企業名や業種フィールドに含まれる場合のみ除外
+    # 事業内容の一部に「広告」が含まれるだけでは除外しない
     EXCLUDE_INDUSTRIES = [
-        "広告",
-        "新聞",
-        "メディア",
-        "出版",
-        "放送",
         "広告代理店",
-        "PR",
+        "広告業",
+        "広告会社",
+        "新聞社",
+        "出版社",
+        "放送局",
+        "テレビ局",
+        "ラジオ局",
+        "メディア事業",
+        "PR会社",
+        "PR代理店",
     ]
 
     # 除外電話番号プレフィックス
@@ -293,9 +299,10 @@ class JobFilter:
                     logger.debug(f"Dispatch filter matched in job_description start: {desc_start}")
                     return f"仕事内容冒頭に派遣（{desc_start[:30]}...）"
 
-        # Step 4: 業界フィルタ
+        # Step 4: 業界フィルタ（企業名のみをチェック、事業内容はチェックしない）
+        # 事業内容に「広告」が含まれるだけで除外されないようにする
         for industry in self.exclude_industries:
-            if industry in combined_text:
+            if industry in company_name:
                 return f"除外業界（{industry}）"
 
         # Step 5: 勤務地フィルタ

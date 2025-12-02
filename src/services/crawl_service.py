@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from scrapers.townwork import TownworkScraper
 from scrapers.indeed import IndeedScraper
 from scrapers.baitoru import BaitoruScraper
+from scrapers.hellowork import HelloworkScraper
 from src.database.db_manager import DatabaseManager
 from src.database.job_repository import JobRepository
 from src.filters.job_filter import JobFilter, FilterResult
@@ -45,6 +46,7 @@ class CrawlService:
             "townwork": TownworkScraper,
             "indeed": IndeedScraper,
             "baitoru": BaitoruScraper,
+            "hellowork": HelloworkScraper,
         }
 
         # 進捗コールバック
@@ -337,12 +339,11 @@ class CrawlService:
                         job['url'] = self._normalize_url(job['url'])
 
                     job['crawled_at'] = datetime.now()
-                    # 既存チェック
-                    existing = self._check_existing(job)
-                    self.job_repository.save_job(job, "townwork")
+                    # 保存（戻り値で新規かどうかを判定）
+                    _, is_new = self.job_repository.save_job(job, "townwork")
 
                     saved_count += 1
-                    if not existing:
+                    if is_new:
                         new_count += 1
                         new_urls.append(job.get("page_url") or job.get("url") or "N/A")
                 except Exception as e:
@@ -502,11 +503,11 @@ class CrawlService:
                         job['page_url'] = self._normalize_url(job['page_url'])
 
                     job['crawled_at'] = datetime.now()
-                    existing = self._check_existing_indeed(job)
-                    self.job_repository.save_job(job, "indeed")
+                    # 保存（戻り値で新規かどうかを判定）
+                    _, is_new = self.job_repository.save_job(job, "indeed")
 
                     saved_count += 1
-                    if not existing:
+                    if is_new:
                         new_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to save job: {e}")
@@ -818,11 +819,11 @@ class CrawlService:
                         job['page_url'] = self._normalize_url(job['page_url'])
 
                     job['crawled_at'] = datetime.now()
-                    existing = self._check_existing_baitoru(job)
-                    self.job_repository.save_job(job, "baitoru")
+                    # 保存（戻り値で新規かどうかを判定）
+                    _, is_new = self.job_repository.save_job(job, "baitoru")
 
                     saved_count += 1
-                    if not existing:
+                    if is_new:
                         new_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to save job: {e}")
@@ -941,6 +942,284 @@ class CrawlService:
                 )
                 conn.commit()
             source_id = self.db_manager.get_source_id("baitoru")
+
+        if source_id:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO crawl_logs (
+                        source_id, keyword, area, status,
+                        total_count, new_count, error_message,
+                        started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    source_id,
+                    ','.join(result['keywords']),
+                    ','.join(result['areas']),
+                    'error' if result['error'] else 'success',
+                    result['total_count'],
+                    result['new_count'],
+                    result['error'],
+                    result['started_at'],
+                    result['finished_at'],
+                ))
+                conn.commit()
+
+    async def crawl_hellowork(
+        self,
+        keywords: List[str],
+        areas: List[str],
+        max_pages: int = 3,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        ハローワークをクロール
+
+        Args:
+            keywords: 検索キーワードリスト
+            areas: 地域リスト（都道府県名）
+            max_pages: 最大ページ数
+            filters: 検索フィルタ
+
+        Returns:
+            クロール結果
+        """
+        result = {
+            'source': 'hellowork',
+            'keywords': keywords,
+            'areas': areas,
+            'started_at': datetime.now(),
+            'finished_at': None,
+            'total_count': 0,
+            'scraped_count': 0,
+            'saved_count': 0,
+            'new_count': 0,
+            'duplicate_count': 0,
+            'existing_count': 0,
+            'jobs': [],
+            'error': None,
+        }
+
+        try:
+            from playwright.async_api import async_playwright
+            from utils.stealth import StealthConfig, create_stealth_context
+
+            self._report_progress("ハローワーク クローリング開始", 0, 1)
+
+            # スクレイパー初期化
+            scraper = HelloworkScraper({})
+
+            all_jobs = []
+            total_raw_count = 0
+            total_existing_count = 0
+
+            # DBから既存のjob_idを取得
+            existing_job_ids = self._get_existing_hellowork_job_ids()
+            logger.info(f"DB内の既存job_id数: {len(existing_job_ids)}")
+
+            async with async_playwright() as p:
+                launch_args = StealthConfig.get_launch_args()
+                launch_args["headless"] = False
+
+                browser = await p.chromium.launch(**launch_args)
+
+                try:
+                    context = await create_stealth_context(browser)
+                    page = await context.new_page()
+                    await StealthConfig.apply_stealth_scripts(page)
+
+                    total_combinations = len(keywords) * len(areas)
+                    current_idx = 0
+
+                    for keyword in keywords:
+                        for area in areas:
+                            current_idx += 1
+                            self._report_progress(
+                                f"[ハローワーク] {area} × {keyword} を検索中...",
+                                current_idx,
+                                total_combinations
+                            )
+
+                            # スクレイピング実行
+                            jobs = await scraper.scrape_with_details(
+                                page=page,
+                                keyword=keyword,
+                                area=area,
+                                max_pages=max_pages,
+                                fetch_details=True,
+                                existing_job_ids=existing_job_ids
+                            )
+
+                            # メタ情報を取得
+                            if jobs and jobs[0].get('_meta'):
+                                meta = jobs[0].pop('_meta')
+                                total_existing_count += meta.get('existing_count', 0)
+
+                            total_raw_count += len(jobs)
+
+                            for job in jobs:
+                                job['keyword'] = keyword
+                                job['area'] = area
+                                all_jobs.append(job)
+
+                            logger.info(f"Found {len(jobs)} jobs for keyword: {keyword} in {area}")
+
+                            # 待機（ボット検出対策）
+                            import random
+                            await page.wait_for_timeout(random.randint(1000, 2000))
+
+                    await context.close()
+
+                except Exception as e:
+                    logger.error(f"HelloWork scraping error: {e}")
+                    error_msg = str(e)
+                    # ハローワーク特有のエラーメッセージを分かりやすく
+                    if "システムの混雑" in error_msg or "続行不可能" in error_msg:
+                        result['error'] = "ハローワークサーバーが混雑中です。しばらく時間をおいて再試行してください。"
+                    else:
+                        result['error'] = error_msg
+
+                finally:
+                    await browser.close()
+
+            result['total_count'] = len(all_jobs)
+            result['scraped_count'] = total_raw_count
+            result['existing_count'] = total_existing_count
+            self._report_progress(f"取得完了: {len(all_jobs)}件", 1, 2)
+
+            # デバッグログ出力
+            if DEBUG_JOB_LOG and all_jobs:
+                self._output_debug_job_log(all_jobs)
+
+            # データベースに保存
+            saved_count = 0
+            new_count = 0
+            for job in all_jobs:
+                try:
+                    if job.get('url'):
+                        job['page_url'] = self._normalize_url(job['url'])
+
+                    job['crawled_at'] = datetime.now()
+                    # 保存（戻り値で新規かどうかを判定）
+                    _, is_new = self.job_repository.save_job(job, "hellowork")
+
+                    saved_count += 1
+                    if is_new:
+                        new_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to save job: {e}")
+
+            result['saved_count'] = saved_count
+            result['new_count'] = new_count
+            result['jobs'] = [self._prepare_hellowork_job_record(job) for job in all_jobs]
+
+            self._report_progress(f"保存完了: {saved_count}件（新着: {new_count}件）", 2, 2)
+            self._save_crawl_log_hellowork(result)
+
+        except Exception as e:
+            error_msg = str(e)
+            # ハローワーク特有のエラーメッセージを分かりやすく
+            if "システムの混雑" in error_msg or "続行不可能" in error_msg:
+                result['error'] = "ハローワークサーバーが混雑中です。しばらく時間をおいて再試行してください。"
+            elif "Timeout" in error_msg or "timeout" in error_msg:
+                result['error'] = "ハローワークへの接続がタイムアウトしました。ネットワーク状況を確認してください。"
+            else:
+                result['error'] = error_msg
+            logger.error(f"HelloWork crawl error: {e}", exc_info=True)
+
+        result['finished_at'] = datetime.now()
+        return result
+
+    def _get_existing_hellowork_job_ids(self) -> set:
+        """DBからハローワークの既存job_idをすべて取得"""
+        source_id = self.db_manager.get_source_id("hellowork")
+        if not source_id:
+            return set()
+
+        existing_ids = set()
+        with self.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT job_id
+                FROM jobs
+                WHERE source_id = ? AND job_id IS NOT NULL AND job_id != ''
+                """,
+                (source_id,)
+            )
+            for row in cursor.fetchall():
+                if row[0]:
+                    existing_ids.add(row[0])
+
+        return existing_ids
+
+    def _check_existing_hellowork(self, job: Dict[str, Any]) -> bool:
+        """ハローワーク求人の既存チェック"""
+        source_id = self.db_manager.get_source_id("hellowork")
+        if not source_id:
+            return False
+
+        job_identifier = job.get('job_id')
+        page_url = self._normalize_url(job.get('url') or job.get('page_url'))
+
+        if not job_identifier and not page_url:
+            return False
+
+        with self.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1
+                FROM jobs
+                WHERE source_id = ?
+                  AND (job_id = ? OR page_url = ?)
+                LIMIT 1
+                """,
+                (source_id, job_identifier or page_url, page_url or job_identifier)
+            )
+            return cursor.fetchone() is not None
+
+    def _prepare_hellowork_job_record(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        """ハローワーク用のテーブル表示データ整形"""
+        return {
+            "source_display_name": "ハローワーク",
+            "job_id": job.get("job_id", job.get("job_number", "")),
+            "company_name": job.get("company_name", job.get("company", "")),
+            "job_title": job.get("job_title", job.get("title", "")),
+            "work_location": job.get("work_location", job.get("location", "")),
+            "address": job.get("work_location", job.get("location", "")),
+            "address_pref": job.get("area", ""),
+            "postal_code": "",
+            "salary": job.get("salary", ""),
+            "salary_detail": job.get("salary", ""),
+            "employment_type": job.get("employment_type", ""),
+            "page_url": job.get("url", job.get("page_url", "")),
+            "crawled_at": job.get("crawled_at"),
+            "working_hours": job.get("working_hours", ""),
+            "holidays": job.get("holidays", ""),
+            "phone": "",
+            "phone_number": "",
+            "business_content": job.get("job_description", ""),
+            "job_description": job.get("job_description", ""),
+            "requirements": job.get("required_experience", ""),
+            "required_license": job.get("required_license", ""),
+            "education": job.get("education", ""),
+            "age_limit": job.get("age_limit", ""),
+        }
+
+    def _save_crawl_log_hellowork(self, result: Dict[str, Any]):
+        """ハローワークのクロールログを保存"""
+        source_id = self.db_manager.get_source_id("hellowork")
+        if not source_id:
+            # ハローワークソースがない場合は作成
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR IGNORE INTO sources (name, url) VALUES (?, ?)",
+                    ("hellowork", "https://www.hellowork.mhlw.go.jp")
+                )
+                conn.commit()
+            source_id = self.db_manager.get_source_id("hellowork")
 
         if source_id:
             with self.db_manager.get_connection() as conn:

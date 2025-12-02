@@ -113,7 +113,7 @@ class CrawlWorker(QThread):
                             break
 
                         # 進捗を報告
-                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル"}
+                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク"}
                         source_label = source_labels.get(source, source)
                         self.progress.emit(f"[{source_label}] {area} × {kw} を検索中...", current_idx[0] + 1, total_combinations)
 
@@ -137,6 +137,14 @@ class CrawlWorker(QThread):
                         elif source == "baitoru":
                             result = loop.run_until_complete(
                                 self.service.crawl_baitoru(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=self.max_pages
+                                )
+                            )
+                        elif source == "hellowork":
+                            result = loop.run_until_complete(
+                                self.service.crawl_hellowork(
                                     keywords=[kw],
                                     areas=[area],
                                     max_pages=self.max_pages
@@ -211,7 +219,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         """UIを初期化"""
-        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed / バイトル")
+        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed / バイトル / ハローワーク")
         self.setMinimumSize(1200, 800)
 
         # メインウィジェット
@@ -270,6 +278,11 @@ class MainWindow(QMainWindow):
         self.baitoru_check.setChecked(False)
         self.baitoru_check.setToolTip("バイトル検索（カテゴリがない場合はキーワード検索にフォールバック）")
         source_layout.addWidget(self.baitoru_check)
+
+        self.hellowork_check = QCheckBox("ハローワーク")
+        self.hellowork_check.setChecked(False)
+        self.hellowork_check.setToolTip("ハローワーク求人検索（都道府県選択でフォーム検索）")
+        source_layout.addWidget(self.hellowork_check)
 
         layout.addWidget(source_group)
 
@@ -1059,6 +1072,8 @@ class MainWindow(QMainWindow):
             sources.append("indeed")
         if self.baitoru_check.isChecked():
             sources.append("baitoru")
+        if self.hellowork_check.isChecked():
+            sources.append("hellowork")
         return sources
 
     def start_crawl(self):
@@ -1092,6 +1107,8 @@ class MainWindow(QMainWindow):
             source_names.append("Indeed")
         if "baitoru" in sources:
             source_names.append("バイトル")
+        if "hellowork" in sources:
+            source_names.append("ハローワーク")
 
         # 確認ダイアログ
         total_combinations = len(keywords) * len(areas) * len(sources)
@@ -1561,10 +1578,11 @@ class CustomizableJobFilter(JobFilter):
                     if dispatch_kw in desc_start:
                         return f"仕事内容冒頭に派遣"
 
-        # 業界フィルタ
+        # 業界フィルタ（企業名のみをチェック、事業内容はチェックしない）
+        # 事業内容に「広告」が含まれるだけで除外されないようにする
         if self.enable_industry:
             for industry in self.exclude_industries:
-                if industry in combined_text:
+                if industry in company_name:
                     return f"除外業界（{industry}）"
 
         # 勤務地フィルタ（沖縄）
