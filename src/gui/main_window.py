@@ -539,7 +539,88 @@ class MainWindow(QMainWindow):
         self.stats_accordion.addWidget(self.stats_label)
         layout.addWidget(self.stats_accordion)
 
+        # デバッグログ（アコーディオン）
+        self.log_accordion = CollapsibleBox("▶ デバッグログ（クリックで展開）")
+        self.log_accordion.toggle_button.setStyleSheet("""
+            QToolButton {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 8px;
+                background-color: #f5f5f5;
+                font-weight: bold;
+                text-align: left;
+            }
+            QToolButton:hover {
+                background-color: #e0e0e0;
+            }
+            QToolButton:checked {
+                background-color: #fff3e0;
+                border-color: #ffb74d;
+            }
+        """)
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(200)
+        self.log_text.setStyleSheet("""
+            QTextEdit {
+                font-family: 'Consolas', 'MS Gothic', monospace;
+                font-size: 11px;
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                border: 1px solid #333;
+                padding: 5px;
+            }
+        """)
+        self.log_accordion.addWidget(self.log_text)
+        self.log_accordion._content_height = 220
+        layout.addWidget(self.log_accordion)
+
+        # ログハンドラを設定
+        self._setup_log_handler()
+
         return panel
+
+    def _setup_log_handler(self):
+        """GUIログハンドラを設定"""
+        class GUILogHandler(logging.Handler):
+            def __init__(self, text_widget):
+                super().__init__()
+                self.text_widget = text_widget
+
+            def emit(self, record):
+                try:
+                    msg = self.format(record)
+                    # メインスレッドで実行するためにQTimerを使用
+                    QTimer.singleShot(0, lambda: self._append_log(msg))
+                except Exception:
+                    pass
+
+            def _append_log(self, msg):
+                try:
+                    self.text_widget.append(msg)
+                    # 自動スクロール
+                    scrollbar = self.text_widget.verticalScrollBar()
+                    scrollbar.setValue(scrollbar.maximum())
+                except Exception:
+                    pass
+
+        # ハンドラを作成
+        self.gui_log_handler = GUILogHandler(self.log_text)
+        self.gui_log_handler.setLevel(logging.DEBUG)
+
+        # フォーマッタを設定
+        formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
+        self.gui_log_handler.setFormatter(formatter)
+
+        # ルートロガーに追加
+        root_logger = logging.getLogger()
+        root_logger.addHandler(self.gui_log_handler)
+        root_logger.setLevel(logging.DEBUG)
+
+    def append_log(self, message: str):
+        """ログメッセージを追加"""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        self.log_text.append(f"{timestamp} {message}")
 
     def create_area_tab(self) -> QWidget:
         """地域選択タブを作成"""
