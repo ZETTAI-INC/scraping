@@ -1264,6 +1264,9 @@ class CrawlService:
         # 勤務地: 詳細ページの work_location または 一覧ページの location
         work_location = job.get("work_location") or job.get("location", "")
 
+        # 所在地（会社住所）: 詳細ページの company_address
+        company_address = job.get("company_address", "")
+
         # 給与: 一覧・詳細両方で salary キーを使用
         salary = job.get("salary", "")
 
@@ -1293,7 +1296,7 @@ class CrawlService:
             "company_name": company_name,
             "job_title": job_title,
             "work_location": work_location,
-            "address": work_location,
+            "address": company_address or work_location,
             "address_pref": job.get("area", ""),
             "postal_code": "",
             "salary": salary,

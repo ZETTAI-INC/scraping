@@ -1240,6 +1240,23 @@ class HelloworkScraper(BaseScraper):
 
             detail["phone_number"] = phone
 
+            # ===== 所在地（会社住所）=====
+            company_address = ""
+            # 「所在地」テーブルから取得
+            company_address = await extract_table_cell("所在地")
+            if not company_address:
+                # フォールバック：正規表現
+                address_patterns = [
+                    r'所在地[:\s]*([^\n]+)',
+                    r'事業所所在地[:\s]*([^\n]+)',
+                ]
+                for pattern in address_patterns:
+                    match = re.search(pattern, body_text)
+                    if match:
+                        company_address = match.group(1).strip()
+                        break
+            detail["company_address"] = company_address
+
             # ===== 掲載日（受付年月日）=====
             posted_date = ""
             date_patterns = [
