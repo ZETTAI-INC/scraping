@@ -638,13 +638,13 @@ class MainWindow(QMainWindow):
         option_layout.addWidget(QLabel("最大ページ数:"), 0, 0)
         self.max_pages_spin = QSpinBox()
         self.max_pages_spin.setRange(1, 20)
-        self.max_pages_spin.setValue(5)
+        self.max_pages_spin.setValue(2)
         option_layout.addWidget(self.max_pages_spin, 0, 1)
 
         option_layout.addWidget(QLabel("並列数:"), 1, 0)
         self.parallel_spin = QSpinBox()
         self.parallel_spin.setRange(1, 12)
-        self.parallel_spin.setValue(5)
+        self.parallel_spin.setValue(2)
         option_layout.addWidget(self.parallel_spin, 1, 1)
 
         layout.addWidget(option_group)
