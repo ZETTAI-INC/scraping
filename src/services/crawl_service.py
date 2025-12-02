@@ -1316,6 +1316,7 @@ class CrawlService:
             "education": job.get("education", ""),
             "age_limit": job.get("age_limit", ""),
             "posted_date": posted_date,
+            "published_date": posted_date,  # 掲載日: 受付年月日をマッピング
         }
 
     def _save_crawl_log_hellowork(self, result: Dict[str, Any]):
