@@ -18,10 +18,74 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QProgressBar, QStatusBar,
     QGroupBox, QSpinBox, QTextEdit, QTabWidget, QMessageBox,
     QFileDialog, QHeaderView, QSplitter, QFrame, QScrollArea,
-    QGridLayout, QSizePolicy
+    QGridLayout, QSizePolicy, QToolButton
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QParallelAnimationGroup, QPropertyAnimation, QAbstractAnimation
 from PyQt6.QtGui import QFont, QColor
+
+
+class CollapsibleBox(QWidget):
+    """折りたたみ可能なアコーディオンウィジェット"""
+
+    def __init__(self, title: str = "", parent=None):
+        super().__init__(parent)
+
+        self.toggle_button = QToolButton(self)
+        self.toggle_button.setStyleSheet("QToolButton { border: none; }")
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toggle_button.setArrowType(Qt.ArrowType.RightArrow)
+        self.toggle_button.setText(title)
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False)
+        self.toggle_button.clicked.connect(self.on_toggle)
+
+        self.content_area = QWidget()
+        self.content_area.setMaximumHeight(0)
+        self.content_area.setMinimumHeight(0)
+
+        self.content_layout = QVBoxLayout(self.content_area)
+        self.content_layout.setContentsMargins(10, 5, 10, 5)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(self.toggle_button)
+        main_layout.addWidget(self.content_area)
+
+        self._animation = None
+        self._collapsed_height = 0
+        self._content_height = 100
+
+    def on_toggle(self, checked: bool):
+        """トグル時のアニメーション"""
+        if checked:
+            self.toggle_button.setArrowType(Qt.ArrowType.DownArrow)
+            self.content_area.setMaximumHeight(self._content_height)
+        else:
+            self.toggle_button.setArrowType(Qt.ArrowType.RightArrow)
+            self.content_area.setMaximumHeight(0)
+
+    def setContentLayout(self, layout):
+        """コンテンツレイアウトを設定"""
+        # 既存のレイアウトをクリア
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+
+        # 新しいウィジェットを追加
+        temp_widget = QWidget()
+        temp_widget.setLayout(layout)
+        self.content_layout.addWidget(temp_widget)
+
+        # コンテンツの高さを計算
+        self._content_height = temp_widget.sizeHint().height() + 20
+
+    def addWidget(self, widget):
+        """ウィジェットを追加"""
+        self.content_layout.addWidget(widget)
+        self._content_height = self.content_area.sizeHint().height() + 50
+
 
 # Matplotlib for charts
 import matplotlib
@@ -451,12 +515,29 @@ class MainWindow(QMainWindow):
         """)
         layout.addWidget(self.last_crawl_label)
 
-        # 統計情報
-        stats_group = QGroupBox("統計情報")
-        stats_layout = QVBoxLayout(stats_group)
+        # 統計情報（アコーディオン）
+        self.stats_accordion = CollapsibleBox("▶ 統計情報（クリックで展開）")
+        self.stats_accordion.toggle_button.setStyleSheet("""
+            QToolButton {
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 8px;
+                background-color: #f5f5f5;
+                font-weight: bold;
+                text-align: left;
+            }
+            QToolButton:hover {
+                background-color: #e0e0e0;
+            }
+            QToolButton:checked {
+                background-color: #e3f2fd;
+                border-color: #90caf9;
+            }
+        """)
         self.stats_label = QLabel("読み込み中...")
-        stats_layout.addWidget(self.stats_label)
-        layout.addWidget(stats_group)
+        self.stats_label.setStyleSheet("padding: 5px;")
+        self.stats_accordion.addWidget(self.stats_label)
+        layout.addWidget(self.stats_accordion)
 
         return panel
 
