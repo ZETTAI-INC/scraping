@@ -1034,6 +1034,9 @@ class CrawlService:
             existing_job_ids = self._get_existing_hellowork_job_ids()
             logger.info(f"DB内の既存job_id数: {len(existing_job_ids)}")
 
+            # 並列数（デフォルト2）
+            parallel_count = 2
+
             async with async_playwright() as p:
                 launch_args = StealthConfig.get_launch_args()
                 launch_args["headless"] = False
@@ -1042,8 +1045,17 @@ class CrawlService:
 
                 try:
                     context = await create_stealth_context(browser)
-                    page = await context.new_page()
-                    await StealthConfig.apply_stealth_scripts(page)
+
+                    # 検索用ページ
+                    search_page = await context.new_page()
+                    await StealthConfig.apply_stealth_scripts(search_page)
+
+                    # 詳細取得用の並列ページを作成
+                    detail_pages = []
+                    for _ in range(parallel_count):
+                        detail_page = await context.new_page()
+                        await StealthConfig.apply_stealth_scripts(detail_page)
+                        detail_pages.append(detail_page)
 
                     total_combinations = len(keywords) * len(areas)
                     current_idx = 0
@@ -1057,13 +1069,13 @@ class CrawlService:
                                 total_combinations
                             )
 
-                            # スクレイピング実行
+                            # 検索のみ実行（詳細取得は後で並列で行う）
                             jobs = await scraper.scrape_with_details(
-                                page=page,
+                                page=search_page,
                                 keyword=keyword,
                                 area=area,
                                 max_pages=max_pages,
-                                fetch_details=True,
+                                fetch_details=False,  # 詳細取得は後で並列で行う
                                 existing_job_ids=existing_job_ids
                             )
 
@@ -1071,6 +1083,48 @@ class CrawlService:
                             if jobs and jobs[0].get('_meta'):
                                 meta = jobs[0].pop('_meta')
                                 total_existing_count += meta.get('existing_count', 0)
+
+                            # 詳細取得を並列で実行
+                            if jobs:
+                                jobs_to_fetch = [j for j in jobs if j.get('job_id')]
+                                total_details = len(jobs_to_fetch)
+
+                                if total_details > 0:
+                                    self._report_progress(
+                                        f"[ハローワーク] 詳細取得中... 0/{total_details}",
+                                        current_idx,
+                                        total_combinations
+                                    )
+
+                                    # 並列で詳細取得
+                                    import random
+                                    current_detail = [0]  # 参照渡し用
+
+                                    async def fetch_detail(job, page_obj):
+                                        job_id = job.get('job_id')
+                                        if job_id:
+                                            try:
+                                                detail = await scraper.extract_detail_info(page_obj, job_id)
+                                                job.update(detail)
+                                                job["url"] = scraper._build_detail_url(job_id)
+                                                # 進捗報告
+                                                current_detail[0] += 1
+                                                self._report_detail_progress(current_detail[0], total_details, len(all_jobs) + len(jobs))
+                                                await page_obj.wait_for_timeout(random.randint(300, 600))
+                                            except Exception as e:
+                                                logger.warning(f"詳細取得失敗: {job_id}: {e}")
+                                        return job
+
+                                    # バッチ処理で並列実行
+                                    for i in range(0, len(jobs_to_fetch), parallel_count):
+                                        batch = jobs_to_fetch[i:i + parallel_count]
+                                        tasks = []
+                                        for idx, job in enumerate(batch):
+                                            page_obj = detail_pages[idx % len(detail_pages)]
+                                            tasks.append(fetch_detail(job, page_obj))
+
+                                        if tasks:
+                                            await asyncio.gather(*tasks, return_exceptions=True)
 
                             total_raw_count += len(jobs)
 
@@ -1083,7 +1137,7 @@ class CrawlService:
 
                             # 待機（ボット検出対策）
                             import random
-                            await page.wait_for_timeout(random.randint(1000, 2000))
+                            await search_page.wait_for_timeout(random.randint(1000, 2000))
 
                     await context.close()
 
