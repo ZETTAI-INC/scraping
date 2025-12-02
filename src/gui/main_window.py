@@ -96,8 +96,15 @@ class CrawlWorker(QThread):
             def detail_progress_callback(current_detail: int, total_details: int, total_scraped: int):
                 self.detail_progress.emit(current_detail, total_details, total_scraped)
 
+            def realtime_count_callback(count: int):
+                # スクレイパーから件数報告を受け取った際に、リアルタイム更新を発行
+                self._current_scraped_count = count
+                elapsed = time.time() - self._start_time
+                self.realtime_update.emit(elapsed, count, self._current_task)
+
             self.service.set_progress_callback(progress_callback)
             self.service.set_detail_progress_callback(detail_progress_callback)
+            self.service.set_realtime_count_callback(realtime_count_callback)
 
             # 各組み合わせを順次実行して進捗を報告
             all_results = {

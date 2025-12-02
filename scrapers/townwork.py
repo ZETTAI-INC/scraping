@@ -26,6 +26,17 @@ class TownworkScraper(BaseScraper):
         self._current_category_path: Optional[str] = None
         # 現在検索中のエリア（PR除外用）
         self._current_search_area: Optional[str] = None
+        # リアルタイム件数コールバック
+        self._realtime_callback = None
+
+    def set_realtime_callback(self, callback):
+        """リアルタイム件数コールバックを設定"""
+        self._realtime_callback = callback
+
+    def _report_count(self, count: int):
+        """件数を報告"""
+        if self._realtime_callback:
+            self._realtime_callback(count)
 
     def set_search_category(self, keyword: str) -> None:
         """
@@ -409,6 +420,8 @@ class TownworkScraper(BaseScraper):
                             continue
 
                     success = True
+                    # リアルタイム件数報告
+                    self._report_count(len(all_jobs))
                     break  # ページ処理成功
 
                 except Exception as e:

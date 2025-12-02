@@ -53,6 +53,8 @@ class CrawlService:
         self.progress_callback: Optional[Callable[[str, int, int], None]] = None
         # 詳細進捗コールバック
         self.detail_progress_callback: Optional[Callable[[int, int, int], None]] = None
+        # リアルタイム件数コールバック（件数が変わるたびに呼ばれる）
+        self.realtime_count_callback: Optional[Callable[[int], None]] = None
 
     def set_progress_callback(self, callback: Callable[[str, int, int], None]):
         """進捗コールバックを設定"""
@@ -61,6 +63,15 @@ class CrawlService:
     def set_detail_progress_callback(self, callback: Callable[[int, int, int], None]):
         """詳細進捗コールバックを設定"""
         self.detail_progress_callback = callback
+
+    def set_realtime_count_callback(self, callback: Callable[[int], None]):
+        """リアルタイム件数コールバックを設定"""
+        self.realtime_count_callback = callback
+
+    def _report_realtime_count(self, count: int):
+        """リアルタイム件数を報告"""
+        if self.realtime_count_callback:
+            self.realtime_count_callback(count)
 
     def _report_progress(self, message: str, current: int = 0, total: int = 0):
         """進捗を報告"""
@@ -185,6 +196,8 @@ class CrawlService:
 
             # スクレイパー初期化
             scraper = TownworkScraper()
+            # リアルタイム件数コールバックを設定
+            scraper.set_realtime_callback(self._report_realtime_count)
 
             # DBから既存のjob_idを取得（詳細取得スキップ用）
             existing_job_ids = self._get_existing_townwork_job_ids()
@@ -631,6 +644,8 @@ class CrawlService:
 
             # スクレイパー初期化
             scraper = BaitoruScraper()
+            # リアルタイム件数コールバックを設定
+            scraper.set_realtime_callback(self._report_realtime_count)
 
             all_jobs = []
             seen_job_ids = set()  # 重複防止用のjob_idセット
@@ -1008,6 +1023,8 @@ class CrawlService:
 
             # スクレイパー初期化
             scraper = HelloworkScraper({})
+            # リアルタイム件数コールバックを設定
+            scraper.set_realtime_callback(self._report_realtime_count)
 
             all_jobs = []
             total_raw_count = 0

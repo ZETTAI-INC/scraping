@@ -489,6 +489,8 @@ class BaitoruScraper(BaseScraper):
                         logger.info(f"No next page link found, page {page_num} is the last page")
 
                     success = True
+                    # リアルタイム件数報告
+                    self._report_count(len(all_jobs))
                     break
 
                 except Exception as e:

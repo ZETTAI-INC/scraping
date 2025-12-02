@@ -441,6 +441,17 @@ class HelloworkScraper(BaseScraper):
         self.base_url = "https://www.hellowork.mhlw.go.jp"
         self.search_url = f"{self.base_url}/kensaku/GECA110010.do?action=initDisp&screenId=GECA110010"
         self.logger = logging.getLogger(__name__)
+        # リアルタイム件数コールバック
+        self._realtime_callback = None
+
+    def set_realtime_callback(self, callback):
+        """リアルタイム件数コールバックを設定"""
+        self._realtime_callback = callback
+
+    def _report_count(self, count: int):
+        """件数を報告"""
+        if self._realtime_callback:
+            self._realtime_callback(count)
 
     async def _check_for_error_page(self, page: Page) -> bool:
         """エラーページかどうかをチェック"""
@@ -544,6 +555,8 @@ class HelloworkScraper(BaseScraper):
 
                 all_jobs.extend(jobs)
                 self.logger.info(f"ページ {page_num}: {len(jobs)}件取得（累計: {len(all_jobs)}件）")
+                # リアルタイム件数報告
+                self._report_count(len(all_jobs))
 
                 if page_num < max_pages:
                     has_next = await self._go_to_next_page(page)

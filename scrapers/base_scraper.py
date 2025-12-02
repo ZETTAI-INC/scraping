@@ -38,6 +38,8 @@ class BaseScraper(ABC):
         self.error_counter = ErrorCounter()
         self.performance_monitor = PerformanceMonitor(name=site_name)
         self.current_filters: Dict[str, Any] = {}
+        # リアルタイム件数コールバック
+        self._realtime_callback = None
 
         # リトライ設定
         self.retry_config = RetryConfig(
@@ -47,6 +49,15 @@ class BaseScraper(ABC):
             exponential_base=2.0,
             exceptions=(PlaywrightTimeoutError, ConnectionError, Exception)
         )
+
+    def set_realtime_callback(self, callback):
+        """リアルタイム件数コールバックを設定"""
+        self._realtime_callback = callback
+
+    def _report_count(self, count: int):
+        """件数を報告"""
+        if self._realtime_callback:
+            self._realtime_callback(count)
 
     def _load_config(self, config_path: str) -> Dict:
         """設定ファイルを読み込み"""
@@ -396,6 +407,8 @@ class BaseScraper(ABC):
                 for result in results:
                     if isinstance(result, list):
                         all_results.extend(result)
+                        # リアルタイム件数報告
+                        self._report_count(len(all_results))
                     elif isinstance(result, Exception):
                         logger.error(f"Task failed: {result}")
                         self.performance_monitor.record_error()
