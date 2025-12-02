@@ -453,6 +453,21 @@ class HelloworkScraper(BaseScraper):
         if self._realtime_callback:
             self._realtime_callback(count)
 
+    def _clean_text(self, text: str) -> str:
+        """不要な文字列を除去してテキストをクリーニング"""
+        if not text:
+            return ""
+        cleaned = text
+        # jobtag関連の不要文字列を除去
+        cleanup_patterns = [
+            r'jobtag\s*について.*$',
+            r'jobtag\s*について',
+            r'\s*jobtag.*$',
+        ]
+        for pattern in cleanup_patterns:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        return cleaned.strip()
+
     async def _check_for_error_page(self, page: Page) -> bool:
         """エラーページかどうかをチェック"""
         try:
@@ -893,15 +908,15 @@ class HelloworkScraper(BaseScraper):
             return {
                 "job_id": job_id,
                 "job_number_display": job_number_display,
-                "title": title,
-                "company": company,
-                "location": location,
-                "salary": salary,
-                "employment_type": employment_type,
-                "working_hours": working_hours,
-                "holidays": holidays,
-                "age_limit": age_limit,
-                "job_description": job_description,
+                "title": self._clean_text(title),
+                "company": self._clean_text(company),
+                "location": self._clean_text(location),
+                "salary": self._clean_text(salary),
+                "employment_type": self._clean_text(employment_type),
+                "working_hours": self._clean_text(working_hours),
+                "holidays": self._clean_text(holidays),
+                "age_limit": self._clean_text(age_limit),
+                "job_description": self._clean_text(job_description),
                 "url": self._build_detail_url(job_id),
                 "source": self.source_name,
             }
@@ -1280,6 +1295,11 @@ class HelloworkScraper(BaseScraper):
             age_match = re.search(r'年齢[:\s]*(\d+歳[^\n]*)', body_text)
             if age_match:
                 detail["age_limit"] = age_match.group(1)
+
+            # 不要な文字列をクリーニング
+            for key, value in detail.items():
+                if isinstance(value, str) and value:
+                    detail[key] = self._clean_text(value)
 
             self.logger.info(f"詳細取得成功: 会社名={detail.get('company_name', '')[:20]}, 賃金={detail.get('salary', '')[:20]}, 電話={detail.get('phone_number', '')}")
 
