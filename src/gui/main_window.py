@@ -32,6 +32,11 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 
+# 日本語フォント設定（Windows用）
+# インポート時に設定することで、全てのグラフに適用される
+plt.rcParams['font.family'] = ['MS Gothic', 'Yu Gothic', 'Meiryo', 'Hiragino Sans', 'sans-serif']
+plt.rcParams['axes.unicode_minus'] = False  # マイナス記号の文字化け対策
+
 # パス設定
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -50,6 +55,7 @@ class CrawlWorker(QThread):
     time_update = pyqtSignal(float, int, int)  # elapsed_time, scraped_count, saved_count
     detail_progress = pyqtSignal(int, int, int)  # current_detail, total_details, total_scraped
     stopped = pyqtSignal()  # 停止完了シグナル
+    realtime_update = pyqtSignal(float, int, str)  # elapsed_time, scraped_count, current_task
 
     def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int, parallel: int, sources: List[str] = None):
         super().__init__()
@@ -60,6 +66,9 @@ class CrawlWorker(QThread):
         self.parallel = parallel
         self.sources = sources or ["townwork"]  # デフォルトはタウンワーク
         self._stop_requested = False
+        self._current_scraped_count = 0  # リアルタイム件数追跡用
+        self._current_task = ""  # 現在のタスク
+        self._start_time = 0
 
     def request_stop(self):
         """停止をリクエスト"""
@@ -74,8 +83,15 @@ class CrawlWorker(QThread):
             total_combinations = len(self.keywords) * len(self.areas) * len(self.sources)
             current_idx = [0]  # リストにして参照渡し
 
+            # 時間計測開始
+            self._start_time = time.time()
+            self._current_scraped_count = 0
+
             def progress_callback(message: str, current: int, total: int):
                 self.progress.emit(message, current_idx[0] + 1, total_combinations)
+                # リアルタイム更新も発行
+                elapsed = time.time() - self._start_time
+                self.realtime_update.emit(elapsed, self._current_scraped_count, self._current_task)
 
             def detail_progress_callback(current_detail: int, total_details: int, total_scraped: int):
                 self.detail_progress.emit(current_detail, total_details, total_scraped)
@@ -95,9 +111,6 @@ class CrawlWorker(QThread):
                 'error': None,
             }
 
-            # 時間計測開始
-            start_time = time.time()
-
             stopped = False
             for source in self.sources:
                 if self._stop_requested:
@@ -115,7 +128,12 @@ class CrawlWorker(QThread):
                         # 進捗を報告
                         source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク"}
                         source_label = source_labels.get(source, source)
-                        self.progress.emit(f"[{source_label}] {area} × {kw} を検索中...", current_idx[0] + 1, total_combinations)
+                        self._current_task = f"[{source_label}] {area} × {kw}"
+                        self.progress.emit(f"{self._current_task} を検索中...", current_idx[0] + 1, total_combinations)
+
+                        # リアルタイム更新を発行
+                        elapsed = time.time() - self._start_time
+                        self.realtime_update.emit(elapsed, self._current_scraped_count, self._current_task)
 
                         if source == "townwork":
                             result = loop.run_until_complete(
@@ -165,21 +183,26 @@ class CrawlWorker(QThread):
 
                         current_idx[0] += 1
 
+                        # リアルタイム件数を更新
+                        self._current_scraped_count = all_results['scraped_count']
+
                         # 経過時間と取得件数を報告
-                        elapsed = time.time() - start_time
+                        elapsed = time.time() - self._start_time
                         self.time_update.emit(
                             elapsed,
                             all_results['scraped_count'],
                             all_results['saved_count']
                         )
+                        # リアルタイム更新も発行
+                        self.realtime_update.emit(elapsed, self._current_scraped_count, self._current_task)
 
             # 時間計測終了
             end_time = time.time()
-            total_elapsed = end_time - start_time
+            total_elapsed = end_time - self._start_time
 
             # 結果に時間情報を追加
             all_results['elapsed_time'] = total_elapsed
-            all_results['start_time'] = start_time
+            all_results['start_time'] = self._start_time
             all_results['end_time'] = end_time
             all_results['stopped'] = stopped
 
@@ -926,9 +949,6 @@ class MainWindow(QMainWindow):
         self.analysis_figure.clear()
         ax = self.analysis_figure.add_subplot(111)
 
-        # 日本語フォント設定（Windows用）
-        plt.rcParams['font.family'] = ['Yu Gothic', 'MS Gothic', 'Meiryo', 'sans-serif']
-
         x = np.arange(len(labels))
         width = 0.5
 
@@ -1153,6 +1173,7 @@ class MainWindow(QMainWindow):
         self.crawl_worker.time_update.connect(self.on_time_update)
         self.crawl_worker.detail_progress.connect(self.on_detail_progress)
         self.crawl_worker.stopped.connect(self.on_crawl_stopped)
+        self.crawl_worker.realtime_update.connect(self.on_realtime_update)
         self.crawl_worker.start()
 
     def stop_crawl(self):
@@ -1207,6 +1228,23 @@ class MainWindow(QMainWindow):
                 padding: 10px;
                 background-color: #e3f2fd;
                 border: 2px solid #1976d2;
+                border-radius: 6px;
+            }
+        """)
+
+    def on_realtime_update(self, elapsed_time: float, scraped_count: int, current_task: str):
+        """リアルタイム進捗更新（一覧取得中）"""
+        time_str = self._format_elapsed_time(elapsed_time)
+        task_info = f" - {current_task}" if current_task else ""
+        self.new_count_label.setText(f"抽出中... {scraped_count} 件取得済み（{time_str}）{task_info}")
+        self.new_count_label.setStyleSheet("""
+            QLabel {
+                color: #e65100;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px;
+                background-color: #fff3e0;
+                border: 2px solid #ff9800;
                 border-radius: 6px;
             }
         """)

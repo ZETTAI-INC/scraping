@@ -527,20 +527,31 @@ class HelloworkScraper(BaseScraper):
                 return all_jobs
 
             for page_num in range(1, max_pages + 1):
-                self.logger.info(f"ページ {page_num} を処理中...")
+                self.logger.info(f"ページ {page_num}/{max_pages} を処理中...")
+
+                # ページ内容が読み込まれるまで待機
+                try:
+                    await page.wait_for_selector('section.card_job, .kyujin_list, table.normal', timeout=10000)
+                except PlaywrightTimeout:
+                    self.logger.warning(f"ページ {page_num} の求人リスト読み込みタイムアウト")
+                    # 少し待ってから続行を試みる
+                    await asyncio.sleep(2)
+
                 jobs = await self._extract_job_list(page)
                 if not jobs:
                     self.logger.info("これ以上の求人がありません")
                     break
 
                 all_jobs.extend(jobs)
-                self.logger.info(f"ページ {page_num}: {len(jobs)}件取得")
+                self.logger.info(f"ページ {page_num}: {len(jobs)}件取得（累計: {len(all_jobs)}件）")
 
                 if page_num < max_pages:
                     has_next = await self._go_to_next_page(page)
                     if not has_next:
+                        self.logger.info("次のページがありません（最終ページ）")
                         break
-                    await asyncio.sleep(2)
+                    # ページ遷移後の待機
+                    await asyncio.sleep(3)
 
         except PlaywrightTimeout as e:
             self.logger.error(f"タイムアウト: {e}")
@@ -758,7 +769,8 @@ class HelloworkScraper(BaseScraper):
 
         HTML構造:
         - tr.kyujin_head: 職種名など
-        - tr.kyujin_body: 会社名、勤務地など
+        - tr.kyujin_body: 会社名、勤務地、賃金などがテーブル形式で配置
+          - 各行: td.fb.in_width_9em (ラベル) + td (値)
         - tr.kyujin_foot: 詳細ボタン (a#ID_dispDetailBtn)
         """
         try:
@@ -785,39 +797,73 @@ class HelloworkScraper(BaseScraper):
             head_row = job_table.locator('tr.kyujin_head')
             if await head_row.count() > 0:
                 try:
-                    # 職種は通常最初のセルに含まれる
-                    head_text = await head_row.inner_text()
-                    lines = [l.strip() for l in head_text.split('\n') if l.strip()]
-                    for line in lines:
-                        if len(line) > 2 and '求人番号' not in line:
-                            title = line[:100]
-                            break
+                    # 職種は「職種」ラベルの次のtdにある
+                    title_cell = head_row.locator('td.m13, td.fs1').first
+                    if await title_cell.count() > 0:
+                        title = (await title_cell.inner_text()).strip()[:100]
+                    else:
+                        # フォールバック: テキストから抽出
+                        head_text = await head_row.inner_text()
+                        lines = [l.strip() for l in head_text.split('\n') if l.strip()]
+                        for line in lines:
+                            if len(line) > 2 and '職種' not in line and '求人番号' not in line:
+                                title = line[:100]
+                                break
                 except Exception as e:
                     self.logger.debug(f"職種取得エラー: {e}")
 
-            # 会社名、勤務地、給与（kyujin_bodyから）
+            # kyujin_body内のテーブルから情報を抽出
             company = ""
             location = ""
             salary = ""
+            employment_type = ""
+            working_hours = ""
+            holidays = ""
+            age_limit = ""
+            job_description = ""
 
             body_row = job_table.locator('tr.kyujin_body')
             if await body_row.count() > 0:
                 try:
-                    body_text = await body_row.inner_text()
-                    lines = [l.strip() for l in body_text.split('\n') if l.strip()]
+                    # 内部テーブルの各行を解析
+                    inner_rows = body_row.locator('tr.border_new')
+                    row_count = await inner_rows.count()
 
-                    for line in lines:
-                        # 会社名
-                        if not company and ('株式会社' in line or '有限会社' in line or
-                                           '合同会社' in line or '医療法人' in line or
-                                           '社会福祉法人' in line or '学校法人' in line):
-                            company = line[:100]
-                        # 勤務地（都道府県を含む）
-                        elif not location and any(pref in line for pref in ['県', '都', '府', '道']):
-                            location = line[:100]
-                        # 給与
-                        elif not salary and ('円' in line or '万' in line):
-                            salary = line[:50]
+                    for i in range(row_count):
+                        row = inner_rows.nth(i)
+                        try:
+                            # ラベル（td.fb）と値（次のtd）を取得
+                            label_cell = row.locator('td.fb').first
+                            value_cell = row.locator('td').nth(1)
+
+                            if await label_cell.count() == 0 or await value_cell.count() == 0:
+                                continue
+
+                            label = (await label_cell.inner_text()).strip()
+                            value = (await value_cell.inner_text()).strip()
+
+                            # ラベルに応じて値を格納
+                            if '事業所名' in label:
+                                company = value[:200]
+                            elif '就業場所' in label:
+                                location = value[:200]
+                            elif '賃金' in label:
+                                salary = value[:100]
+                            elif '雇用形態' in label:
+                                employment_type = value[:50]
+                            elif '就業時間' in label:
+                                working_hours = value[:100]
+                            elif '休日' in label:
+                                holidays = value[:100]
+                            elif '年齢' in label:
+                                age_limit = value[:50]
+                            elif '仕事の内容' in label:
+                                job_description = value[:500]
+
+                        except Exception as e:
+                            self.logger.debug(f"行 {i} の解析エラー: {e}")
+                            continue
+
                 except Exception as e:
                     self.logger.debug(f"本体情報取得エラー: {e}")
 
@@ -838,6 +884,11 @@ class HelloworkScraper(BaseScraper):
                 "company": company,
                 "location": location,
                 "salary": salary,
+                "employment_type": employment_type,
+                "working_hours": working_hours,
+                "holidays": holidays,
+                "age_limit": age_limit,
+                "job_description": job_description,
                 "url": self._build_detail_url(job_id),
                 "source": self.source_name,
             }
@@ -940,29 +991,55 @@ class HelloworkScraper(BaseScraper):
         """次のページへ移動
 
         HTML構造:
-        - ページネーションは ul.flex.page_navi 内にある
+        - ページネーションは ul.flex.page_navi 内にある（ページ上部と下部の2箇所）
         - 次へボタン: input[name="fwListNaviBtnNext"][value="次へ＞"]
+        - ボタンは type="submit" なのでフォーム送信によりページ遷移
         """
         try:
-            # 「次へ＞」ボタンを探す
-            next_button = page.locator('input[name="fwListNaviBtnNext"]')
+            # 「次へ＞」ボタンを探す（上部と下部に2つあるので first を使用）
+            next_button = page.locator('input[name="fwListNaviBtnNext"]').first
             if await next_button.count() > 0:
                 # ボタンが無効化されていないかチェック
                 is_disabled = await next_button.is_disabled()
-                if not is_disabled:
-                    await next_button.click()
-                    await page.wait_for_load_state("networkidle", timeout=30000)
-                    self.logger.info("次のページへ移動成功")
-                    return True
-                else:
+                if is_disabled:
                     self.logger.info("次へボタンが無効化されています（最終ページ）")
                     return False
 
+                # クリック前の現在のページ番号を取得（ページ遷移確認用）
+                current_disabled = page.locator('ul.page_navi input[disabled]').first
+                current_page_value = ""
+                if await current_disabled.count() > 0:
+                    current_page_value = await current_disabled.get_attribute("value") or ""
+                    self.logger.debug(f"現在のページ: {current_page_value}")
+
+                # クリックしてページ遷移を待つ
+                await next_button.click()
+
+                # ページ遷移を確実に待つ
+                await page.wait_for_load_state("domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)  # 追加の待機
+
+                # ページが変わったことを確認
+                new_disabled = page.locator('ul.page_navi input[disabled]').first
+                if await new_disabled.count() > 0:
+                    new_page_value = await new_disabled.get_attribute("value") or ""
+                    self.logger.info(f"ページ遷移成功: {current_page_value} → {new_page_value}")
+                else:
+                    self.logger.info("次のページへ移動成功")
+
+                return True
+
             # フォールバック: テキストで探す
-            fallback_button = page.locator('input[value*="次へ"], a:has-text("次へ")')
+            fallback_button = page.locator('input[value*="次へ"]').first
             if await fallback_button.count() > 0:
-                await fallback_button.first.click()
-                await page.wait_for_load_state("networkidle", timeout=30000)
+                is_disabled = await fallback_button.is_disabled()
+                if is_disabled:
+                    self.logger.info("次へボタンが無効化されています（最終ページ）")
+                    return False
+
+                await fallback_button.click()
+                await page.wait_for_load_state("domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
                 self.logger.info("次のページへ移動成功（フォールバック）")
                 return True
 
@@ -970,7 +1047,7 @@ class HelloworkScraper(BaseScraper):
             return False
 
         except Exception as e:
-            self.logger.debug(f"次ページ移動エラー: {e}")
+            self.logger.warning(f"次ページ移動エラー: {e}")
         return False
 
     async def extract_detail_info(self, page: Page, job_url_or_id: str) -> Dict[str, Any]:

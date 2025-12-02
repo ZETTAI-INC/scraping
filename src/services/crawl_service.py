@@ -1180,18 +1180,39 @@ class CrawlService:
             return cursor.fetchone() is not None
 
     def _prepare_hellowork_job_record(self, job: Dict[str, Any]) -> Dict[str, Any]:
-        """ハローワーク用のテーブル表示データ整形"""
+        """ハローワーク用のテーブル表示データ整形
+
+        Note:
+            一覧ページから取得したデータと詳細ページから取得したデータを統合
+            - 一覧ページ: company, location, salary, employment_type, working_hours, holidays, age_limit, job_description
+            - 詳細ページ: company_name, work_location, salary, job_title, etc.
+        """
+        # 会社名: 詳細ページの company_name または 一覧ページの company
+        company_name = job.get("company_name") or job.get("company", "")
+
+        # 勤務地: 詳細ページの work_location または 一覧ページの location
+        work_location = job.get("work_location") or job.get("location", "")
+
+        # 給与: 一覧・詳細両方で salary キーを使用
+        salary = job.get("salary", "")
+
+        # 職種: 詳細ページの job_title または 一覧ページの title
+        job_title = job.get("job_title") or job.get("title", "")
+
+        # 仕事内容: 詳細ページ・一覧ページ両方で job_description
+        job_description = job.get("job_description", "")
+
         return {
             "source_display_name": "ハローワーク",
             "job_id": job.get("job_id", job.get("job_number", "")),
-            "company_name": job.get("company_name", job.get("company", "")),
-            "job_title": job.get("job_title", job.get("title", "")),
-            "work_location": job.get("work_location", job.get("location", "")),
-            "address": job.get("work_location", job.get("location", "")),
+            "company_name": company_name,
+            "job_title": job_title,
+            "work_location": work_location,
+            "address": work_location,
             "address_pref": job.get("area", ""),
             "postal_code": "",
-            "salary": job.get("salary", ""),
-            "salary_detail": job.get("salary", ""),
+            "salary": salary,
+            "salary_detail": salary,
             "employment_type": job.get("employment_type", ""),
             "page_url": job.get("url", job.get("page_url", "")),
             "crawled_at": job.get("crawled_at"),
@@ -1199,8 +1220,8 @@ class CrawlService:
             "holidays": job.get("holidays", ""),
             "phone": "",
             "phone_number": "",
-            "business_content": job.get("job_description", ""),
-            "job_description": job.get("job_description", ""),
+            "business_content": job_description,
+            "job_description": job_description,
             "requirements": job.get("required_experience", ""),
             "required_license": job.get("required_license", ""),
             "education": job.get("education", ""),
