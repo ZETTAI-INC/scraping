@@ -231,6 +231,40 @@ class LineBaitoScraper(BaseScraper):
         area_clean = area.rstrip("都府県")
         return self.PREFECTURE_IDS.get(area_clean, self.PREFECTURE_IDS.get(area, 13))
 
+    async def _check_no_results(self, page: Page) -> bool:
+        """
+        検索結果が0件かどうかをチェック
+        早期にリターンしてセレクタタイムアウトを避ける
+        """
+        try:
+            # 1. セレクタベースのチェック
+            no_results_patterns = [
+                "text=検索結果 0件",
+                "text=0件の求人",
+                "text=該当する求人がありません",
+                "text=見つかりませんでした",
+                "text=条件に一致する求人はありません",
+            ]
+            for pattern in no_results_patterns:
+                no_result_elem = await page.query_selector(pattern)
+                if no_result_elem:
+                    is_visible = await no_result_elem.is_visible()
+                    if is_visible:
+                        return True
+
+            # 2. 件数パターンのチェック
+            body_text = await page.inner_text("body")
+            result_match = re.search(r'検索結果\s*(\d+)\s*件', body_text)
+            if result_match:
+                result_count = int(result_match.group(1))
+                if result_count == 0:
+                    return True
+
+            return False
+        except Exception as e:
+            logger.debug(f"[LINEバイト] 0件チェックエラー（続行）: {e}")
+            return False
+
     def _get_job_category_id(self, keyword: str) -> Optional[int]:
         """キーワードから業種カテゴリIDを取得
 
@@ -355,35 +389,10 @@ class LineBaitoScraper(BaseScraper):
             # React SPAなのでレンダリングを待つ
             await page.wait_for_timeout(3000)
 
-            # 検索結果が0件かどうかをチェック
-            no_results_patterns = [
-                "text=検索結果 0件",
-                "text=0件の求人",
-                "text=該当する求人がありません",
-                "text=見つかりませんでした",
-                "text=条件に一致する求人はありません",
-            ]
-            for pattern in no_results_patterns:
-                no_result_elem = await page.query_selector(pattern)
-                if no_result_elem:
-                    is_visible = await no_result_elem.is_visible()
-                    if is_visible:
-                        logger.info(f"[LINEバイト] 検索結果が0件です")
-                        return {'jobs': [], 'raw_count': 0}
-
-            # ページテキストから検索結果件数を確認
-            try:
-                body_text = await page.inner_text("body")
-                # 「検索結果 X件」のパターンを探す
-                result_match = re.search(r'検索結果\s*(\d+)\s*件', body_text)
-                if result_match:
-                    result_count = int(result_match.group(1))
-                    if result_count == 0:
-                        logger.info(f"[LINEバイト] 検索結果が0件です")
-                        return {'jobs': [], 'raw_count': 0}
-                    logger.info(f"[LINEバイト] 検索結果: {result_count}件")
-            except Exception as e:
-                logger.debug(f"[LINEバイト] 検索結果件数の取得に失敗: {e}")
+            # ★ 検索結果0件の早期検出（セレクタタイムアウトを避けて次のエリアに進む）
+            if await self._check_no_results(page):
+                logger.info(f"[LINEバイト] 検索結果0件を検出 - {area} × {keyword}")
+                return {'jobs': [], 'raw_count': 0}
 
             # 求人カードのセレクタを特定
             used_selector = await self._find_job_card_selector(page)
