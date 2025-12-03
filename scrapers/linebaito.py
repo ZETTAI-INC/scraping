@@ -477,70 +477,74 @@ class LineBaitoScraper(BaseScraper):
                 if match:
                     data["job_id"] = match.group(1)
 
-            # 職種名を取得（説明文ではなく「保育スタッフ」のような短い職種名）
-            # LINEバイトのカード構造: 職種名（短い）→ 説明文（長い）の順
-            job_type_selectors = [
-                "[class*='jobType']",
-                "[class*='JobType']",
-                "[class*='category']",
-                "[class*='Category']",
-                "[class*='occupation']",
-                "[class*='Occupation']",
-            ]
-            job_type = None
-            for sel in job_type_selectors:
-                job_type_elem = await card.query_selector(sel)
-                if job_type_elem:
-                    job_type = await job_type_elem.inner_text()
-                    if job_type:
-                        job_type = job_type.strip()
-                        break
+            # スキップすべきバッジ/ラベルテキスト
+            SKIP_TEXTS = {"NEW", "新着", "急募", "PR", "おすすめ", "人気", "注目", "ア", "派", "契", "正"}
 
-            # タイトル/説明文を取得
-            title_selectors = [
-                "[class*='title']",
-                "[class*='Title']",
-                "h2", "h3",
-            ]
+            # 職種名を取得
+            # LINEバイトのカード構造: NEW → 雇用形態 → 職種名 → 説明文 の順
+            job_type = None
             description = None
-            for sel in title_selectors:
-                title_elem = await card.query_selector(sel)
-                if title_elem:
-                    title = await title_elem.inner_text()
-                    if title and len(title) > 3:
-                        description = title.strip()
-                        break
+
+            # カード内の全テキスト要素を取得して順番に確認
+            all_text_elements = await card.query_selector_all("span, div, p, h2, h3, h4")
+            text_candidates = []
+
+            for elem in all_text_elements:
+                try:
+                    text = await elem.inner_text()
+                    text = text.strip()
+                    if text and len(text) >= 2:
+                        # スキップテキストを除外
+                        if text in SKIP_TEXTS:
+                            continue
+                        # 改行を含む場合は分割
+                        lines = [line.strip() for line in text.split('\n') if line.strip()]
+                        for line in lines:
+                            if line not in SKIP_TEXTS and len(line) >= 2:
+                                text_candidates.append(line)
+                except:
+                    continue
+
+            # 重複を除去しつつ順序を保持
+            seen = set()
+            unique_candidates = []
+            for t in text_candidates:
+                if t not in seen and t not in SKIP_TEXTS:
+                    seen.add(t)
+                    unique_candidates.append(t)
 
             # 職種名と説明文を判別
-            # 職種名が見つかった場合はそれをtitleに、説明文をjob_descriptionに
+            for text in unique_candidates:
+                # スキップすべきテキスト
+                if text in SKIP_TEXTS:
+                    continue
+                # 給与っぽいもの
+                if re.search(r'(時給|日給|月給|年収|万円|\d{3,}円)', text):
+                    continue
+                # 住所・駅っぽいもの
+                if re.search(r'(駅|線|分|区$|市$|町$|村$|都$|府$|県$)', text):
+                    continue
+
+                # 短いテキスト（3-25文字）で記号が少ない → 職種名の可能性
+                if 3 <= len(text) <= 25 and not any(c in text for c in "♪◆★●！？"):
+                    if not job_type:
+                        job_type = text
+                # 長いテキストまたは記号が多い → 説明文
+                elif len(text) > 25 or any(c in text for c in "♪◆★●"):
+                    if not description:
+                        description = text
+
+                # 両方見つかったら終了
+                if job_type and description:
+                    break
+
+            # 結果を設定
             if job_type:
                 data["title"] = job_type
                 if description:
                     data["job_description"] = description
             elif description:
-                # 説明文から職種名を抽出する試み
-                # 長い説明文（記号や絵文字が多い）は説明、短いものは職種名
-                if len(description) > 30 or any(c in description for c in "♪◆★●！!？?"):
-                    # 長い説明文の場合、カード内の他の短いテキストを探す
-                    all_text_elements = await card.query_selector_all("span, div, p")
-                    for elem in all_text_elements:
-                        try:
-                            text = await elem.inner_text()
-                            text = text.strip()
-                            # 短くてシンプルな職種名らしいもの
-                            if text and 2 <= len(text) <= 20 and not any(c in text for c in "♪◆★●！!？?円〜"):
-                                # 給与や住所っぽくないもの
-                                if not re.search(r'(時給|日給|月給|\d{3,}円|駅|分|区|市|町|村)', text):
-                                    data["title"] = text
-                                    data["job_description"] = description
-                                    break
-                        except:
-                            continue
-                    else:
-                        # 見つからなかった場合は説明文をtitleに
-                        data["title"] = description
-                else:
-                    data["title"] = description
+                data["title"] = description
 
             # 会社名
             company_selectors = [
