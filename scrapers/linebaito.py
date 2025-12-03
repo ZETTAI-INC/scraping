@@ -672,22 +672,8 @@ class LineBaitoScraper(BaseScraper):
             elif description:
                 data["title"] = description
 
-            # 会社名
-            company_selectors = [
-                "[class*='company']",
-                "[class*='Company']",
-                "[class*='employer']",
-            ]
-            for sel in company_selectors:
-                company_elem = await card.query_selector(sel)
-                if company_elem:
-                    company = await company_elem.inner_text()
-                    if company:
-                        data["company_name"] = company.strip()
-                        break
-
-            # 給与と勤務地を取得
-            # LINEバイトのカード構造: 給与（青字）→ 勤務地（その直下）
+            # 給与を取得
+            # LINEバイトのカード構造: 給与（青字）→ 店舗名/会社名（その直下）→ 市区町村名
             salary_selectors = [
                 "[class*='salary']",
                 "[class*='Salary']",
@@ -703,7 +689,8 @@ class LineBaitoScraper(BaseScraper):
                         data["salary"] = salary.strip()
                         break
 
-            # 勤務地: 給与要素の次の兄弟要素から取得
+            # 会社名（店舗名）: 給与要素の次の兄弟要素から取得
+            # ※以前は「住所1」に入れていたものを「会社名」として使用
             if salary_elem:
                 try:
                     # 給与要素の次の兄弟要素を取得
@@ -725,42 +712,73 @@ class LineBaitoScraper(BaseScraper):
                     if next_sibling:
                         next_elem = next_sibling.as_element()
                         if next_elem:
-                            location_text = await next_elem.inner_text()
-                            if location_text:
-                                location_text = location_text.strip()
-                                # 給与っぽくないものだけ勤務地として採用
-                                if not re.search(r'(時給|日給|月給|円)', location_text):
-                                    data["location"] = location_text
+                            company_text = await next_elem.inner_text()
+                            if company_text:
+                                company_text = company_text.strip()
+                                # 給与っぽくないものだけ会社名として採用
+                                if not re.search(r'(時給|日給|月給|円)', company_text):
+                                    data["company_name"] = company_text
                 except Exception as e:
-                    logger.debug(f"[LINEバイト] 勤務地取得エラー（兄弟要素）: {e}")
+                    logger.debug(f"[LINEバイト] 会社名取得エラー（兄弟要素）: {e}")
 
-            # フォールバック: セレクタで勤務地を探す
-            if not data.get("location"):
-                location_selectors = [
+            # 会社名のフォールバック: セレクタで探す
+            if not data.get("company_name"):
+                company_selectors = [
+                    "[class*='company']",
+                    "[class*='Company']",
+                    "[class*='employer']",
                     "[class*='location']",
                     "[class*='Location']",
-                    "[class*='area']",
-                    "[class*='address']",
                     "[class*='place']",
                     "[class*='Place']",
                 ]
-                for sel in location_selectors:
-                    loc_elem = await card.query_selector(sel)
-                    if loc_elem:
-                        location = await loc_elem.inner_text()
-                        if location:
-                            data["location"] = location.strip()
+                for sel in company_selectors:
+                    company_elem = await card.query_selector(sel)
+                    if company_elem:
+                        company = await company_elem.inner_text()
+                        if company:
+                            data["company_name"] = company.strip()
                             break
 
-            # さらにフォールバック: テキスト候補から駅名・地名を探す
+            # 住所（市区町村名）: テキスト候補から「〇〇市」「〇〇区」などを探す
+            # 例: 「弘前市」「渋谷区」「港区」など
+            if unique_candidates:
+                for text in unique_candidates:
+                    # 市区町村名パターン（「〇〇市」「〇〇区」「〇〇町」「〇〇村」で終わる短いテキスト）
+                    if re.search(r'^.{1,10}(市|区|町|村)$', text):
+                        # 給与や会社名と同じでなければ採用
+                        if not re.search(r'(時給|日給|月給|円)', text):
+                            if text != data.get("company_name"):
+                                data["location"] = text
+                                break
+
+            # 住所のフォールバック: より広いパターンで探す
             if not data.get("location") and unique_candidates:
                 for text in unique_candidates:
-                    # 駅名・地名パターン
-                    if re.search(r'(駅|線|区|市|町|村)', text) and len(text) <= 30:
-                        # 給与ではない
+                    # 駅名・地名パターン（「〇〇駅」「〇〇線」を含む）
+                    if re.search(r'(駅|線)', text) and len(text) <= 30:
+                        # 給与ではない、会社名と同じでない
                         if not re.search(r'(時給|日給|月給|円)', text):
-                            data["location"] = text
-                            break
+                            if text != data.get("company_name"):
+                                data["location"] = text
+                                break
+
+            # さらにフォールバック: セレクタでarea/addressを探す
+            if not data.get("location"):
+                area_selectors = [
+                    "[class*='area']",
+                    "[class*='address']",
+                ]
+                for sel in area_selectors:
+                    area_elem = await card.query_selector(sel)
+                    if area_elem:
+                        area_text = await area_elem.inner_text()
+                        if area_text:
+                            area_text = area_text.strip()
+                            # 会社名と同じでなければ採用
+                            if area_text != data.get("company_name"):
+                                data["location"] = area_text
+                                break
 
             return data if data.get("page_url") else None
 
