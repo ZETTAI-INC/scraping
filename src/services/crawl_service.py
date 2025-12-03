@@ -17,6 +17,7 @@ from scrapers.townwork import TownworkScraper
 from scrapers.indeed import IndeedScraper
 from scrapers.baitoru import BaitoruScraper
 from scrapers.hellowork import HelloworkScraper
+from scrapers.linebaito import LineBaitoScraper
 from src.database.db_manager import DatabaseManager
 from src.database.job_repository import JobRepository
 from src.filters.job_filter import JobFilter, FilterResult
@@ -47,6 +48,7 @@ class CrawlService:
             "indeed": IndeedScraper,
             "baitoru": BaitoruScraper,
             "hellowork": HelloworkScraper,
+            "linebaito": LineBaitoScraper,
         }
 
         # 進捗コールバック
@@ -702,16 +704,27 @@ class CrawlService:
                 launch_args["headless"] = False
 
                 browser = await p.chromium.launch(**launch_args)
+                logger.info("[バイトル] ブラウザ起動完了")
 
                 try:
                     # 画像・動画をブロックして高速化（CSSは残す）
                     context = await create_stealth_context(browser, block_resources=True)
+                    logger.info("[バイトル] Stealthコンテキスト作成完了")
 
                     # メインページ（一覧取得用）
                     page = await context.new_page()
                     await StealthConfig.apply_stealth_scripts(page)
                     if hasattr(context, '_block_resources') and context._block_resources:
                         await context._setup_route_blocking(page)
+
+                    # 初回アクセス前にバイトルのトップページを訪問してCookieを取得
+                    logger.info("[バイトル] トップページにアクセスしてセッション確立中...")
+                    try:
+                        await page.goto("https://www.baitoru.com/", wait_until="domcontentloaded", timeout=30000)
+                        await page.wait_for_timeout(2000)
+                        logger.info("[バイトル] セッション確立完了")
+                    except Exception as e:
+                        logger.warning(f"[バイトル] トップページアクセス失敗（続行）: {e}")
 
                     # 並列用ページ2つ（詳細取得用）
                     detail_pages = []
@@ -985,7 +998,8 @@ class CrawlService:
         keywords: List[str],
         areas: List[str],
         max_pages: int = 3,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        parallel: int = 3
     ) -> Dict[str, Any]:
         """
         ハローワークをクロール
@@ -995,6 +1009,7 @@ class CrawlService:
             areas: 地域リスト（都道府県名）
             max_pages: 最大ページ数
             filters: 検索フィルタ
+            parallel: 並列処理数（デフォルト3、上限3）
 
         Returns:
             クロール結果
@@ -1034,8 +1049,9 @@ class CrawlService:
             existing_job_ids = self._get_existing_hellowork_job_ids()
             logger.info(f"DB内の既存job_id数: {len(existing_job_ids)}")
 
-            # 並列数（デフォルト2）
-            parallel_count = 2
+            # 並列数（引数から取得、上限3）
+            parallel_count = min(parallel, 3)
+            logger.info(f"ハローワーク並列数: {parallel_count}")
 
             async with async_playwright() as p:
                 launch_args = StealthConfig.get_launch_args()
@@ -1332,6 +1348,293 @@ class CrawlService:
                 )
                 conn.commit()
             source_id = self.db_manager.get_source_id("hellowork")
+
+        if source_id:
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO crawl_logs (
+                        source_id, keyword, area, status,
+                        total_count, new_count, error_message,
+                        started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    source_id,
+                    ','.join(result['keywords']),
+                    ','.join(result['areas']),
+                    'error' if result['error'] else 'success',
+                    result['total_count'],
+                    result['new_count'],
+                    result['error'],
+                    result['started_at'],
+                    result['finished_at'],
+                ))
+                conn.commit()
+
+    async def crawl_linebaito(
+        self,
+        keywords: List[str],
+        areas: List[str],
+        max_pages: int = 3,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        LINEバイトをクロール
+
+        Args:
+            keywords: 検索キーワードリスト
+            areas: 地域リスト（都道府県名）
+            max_pages: 最大ページ数
+            filters: 検索フィルタ
+
+        Returns:
+            クロール結果
+        """
+        result = {
+            'source': 'linebaito',
+            'keywords': keywords,
+            'areas': areas,
+            'started_at': datetime.now(),
+            'finished_at': None,
+            'total_count': 0,
+            'scraped_count': 0,
+            'saved_count': 0,
+            'new_count': 0,
+            'duplicate_count': 0,
+            'existing_count': 0,
+            'jobs': [],
+            'error': None,
+        }
+
+        try:
+            from playwright.async_api import async_playwright
+            from utils.stealth import StealthConfig, create_stealth_context
+            import random
+
+            self._report_progress("LINEバイト クローリング開始", 0, 1)
+
+            # スクレイパー初期化
+            scraper = LineBaitoScraper()
+            # リアルタイム件数コールバックを設定
+            scraper.set_realtime_callback(self._report_realtime_count)
+
+            all_jobs = []
+            seen_job_ids = set()
+            total_raw_count = 0
+            total_existing_count = 0
+
+            # DBから既存のjob_idを取得
+            existing_job_ids = self._get_existing_linebaito_job_ids()
+            logger.info(f"DB内の既存job_id数: {len(existing_job_ids)}")
+
+            async with async_playwright() as p:
+                launch_args = StealthConfig.get_launch_args()
+                # React SPAなのでheadlessでもOKだが、念のためブラウザ表示
+                launch_args["headless"] = False
+
+                browser = await p.chromium.launch(**launch_args)
+                logger.info("[LINEバイト] ブラウザ起動完了")
+
+                try:
+                    context = await create_stealth_context(browser, block_resources=True)
+                    logger.info("[LINEバイト] Stealthコンテキスト作成完了")
+
+                    # メインページ（一覧取得用）
+                    page = await context.new_page()
+                    await StealthConfig.apply_stealth_scripts(page)
+                    if hasattr(context, '_block_resources') and context._block_resources:
+                        await context._setup_route_blocking(page)
+
+                    # 詳細取得用ページ
+                    detail_page = await context.new_page()
+                    await StealthConfig.apply_stealth_scripts(detail_page)
+                    if hasattr(context, '_block_resources') and context._block_resources:
+                        await context._setup_route_blocking(detail_page)
+
+                    total_combinations = len(keywords) * len(areas)
+                    current_idx = 0
+
+                    for keyword in keywords:
+                        for area in areas:
+                            current_idx += 1
+                            self._report_progress(
+                                f"[LINEバイト] {area} × {keyword} を検索中...",
+                                current_idx,
+                                total_combinations
+                            )
+
+                            # スクレイピング実行
+                            search_result = await scraper.search_jobs(
+                                page=page,
+                                keyword=keyword,
+                                area=area,
+                                max_pages=max_pages,
+                                seen_job_ids=seen_job_ids
+                            )
+
+                            jobs = search_result['jobs']
+                            total_raw_count += search_result['raw_count']
+
+                            logger.info(f"Found {len(jobs)} unique jobs (raw: {search_result['raw_count']}) for keyword: {keyword} in {area}")
+
+                            # DB既存チェック・詳細取得
+                            jobs_to_fetch = []
+                            skipped_existing_count = 0
+
+                            for job in jobs:
+                                job['keyword'] = keyword
+                                job['area'] = area
+
+                                # DB既存チェック
+                                job_id = job.get('job_id')
+                                if job_id and job_id in existing_job_ids:
+                                    skipped_existing_count += 1
+                                    total_existing_count += 1
+                                    logger.debug(f"Skipped existing job (in DB): {job_id}")
+                                    all_jobs.append(job)
+                                    continue
+
+                                jobs_to_fetch.append(job)
+
+                            if skipped_existing_count > 0:
+                                logger.info(f"Skipped {skipped_existing_count} existing jobs (already in DB)")
+
+                            # 詳細取得（シーケンシャル）
+                            if jobs_to_fetch:
+                                self._report_progress(
+                                    f"[LINEバイト] 詳細取得中: {len(jobs_to_fetch)}件",
+                                    current_idx,
+                                    total_combinations
+                                )
+
+                                for idx, job in enumerate(jobs_to_fetch):
+                                    job_url = job.get('page_url')
+                                    if job_url:
+                                        try:
+                                            detail_data = await scraper.extract_detail_info(detail_page, job_url)
+                                            job.update(detail_data)
+                                            self._report_detail_progress(idx + 1, len(jobs_to_fetch), total_raw_count)
+                                            await detail_page.wait_for_timeout(random.randint(500, 1000))
+                                        except Exception as e:
+                                            logger.warning(f"Failed to fetch detail for {job_url}: {e}")
+
+                                    all_jobs.append(job)
+
+                            # 待機（ボット検出対策）
+                            await page.wait_for_timeout(random.randint(1000, 2000))
+
+                    await detail_page.close()
+                    await context.close()
+
+                except Exception as e:
+                    logger.error(f"LINEバイト scraping error: {e}")
+                    result['error'] = str(e)
+
+                finally:
+                    await browser.close()
+
+            result['total_count'] = len(all_jobs)
+            result['scraped_count'] = total_raw_count
+            result['existing_count'] = total_existing_count
+            self._report_progress(f"取得完了: {total_raw_count}件（ユニーク: {len(all_jobs)}件）", 1, 2)
+
+            # デバッグログ出力
+            if DEBUG_JOB_LOG and all_jobs:
+                self._output_debug_job_log(all_jobs)
+
+            # データベースに保存
+            saved_count = 0
+            new_count = 0
+            for job in all_jobs:
+                try:
+                    if job.get('page_url'):
+                        job['page_url'] = self._normalize_url(job['page_url'])
+
+                    job['crawled_at'] = datetime.now()
+                    _, is_new = self.job_repository.save_job(job, "linebaito")
+
+                    saved_count += 1
+                    if is_new:
+                        new_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to save job: {e}")
+
+            result['saved_count'] = saved_count
+            result['new_count'] = new_count
+            result['jobs'] = [self._prepare_linebaito_job_record(job) for job in all_jobs]
+
+            self._report_progress(f"保存完了: {saved_count}件（新着: {new_count}件）", 2, 2)
+            self._save_crawl_log_linebaito(result)
+
+        except Exception as e:
+            result['error'] = str(e)
+            logger.error(f"LINEバイト crawl error: {e}", exc_info=True)
+
+        result['finished_at'] = datetime.now()
+        return result
+
+    def _get_existing_linebaito_job_ids(self) -> set:
+        """DBからLINEバイトの既存job_idをすべて取得"""
+        source_id = self.db_manager.get_source_id("linebaito")
+        if not source_id:
+            return set()
+
+        existing_ids = set()
+        with self.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT job_id
+                FROM jobs
+                WHERE source_id = ? AND job_id IS NOT NULL AND job_id != ''
+                """,
+                (source_id,)
+            )
+            for row in cursor.fetchall():
+                if row[0]:
+                    existing_ids.add(row[0])
+
+        return existing_ids
+
+    def _prepare_linebaito_job_record(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        """LINEバイト用のテーブル表示データ整形"""
+        return {
+            "source_display_name": "LINEバイト",
+            "job_id": job.get("job_id", ""),
+            "company_name": job.get("company_name", ""),
+            "job_title": job.get("title", job.get("job_title", "")),
+            "work_location": job.get("location", job.get("work_location", "")),
+            "address": job.get("location", ""),
+            "address_pref": job.get("location", ""),
+            "postal_code": "",
+            "salary": job.get("salary", ""),
+            "employment_type": "",
+            "page_url": job.get("page_url", ""),
+            "crawled_at": job.get("crawled_at"),
+            "working_hours": job.get("working_hours", ""),
+            "holidays": "",
+            "phone": "",
+            "phone_number": "",
+            "phone_number_normalized": "",
+            "business_content": job.get("job_description", ""),
+            "job_description": job.get("job_description", ""),
+            "qualifications": "",
+            "published_date": "",
+        }
+
+    def _save_crawl_log_linebaito(self, result: Dict[str, Any]):
+        """LINEバイトのクロールログを保存"""
+        source_id = self.db_manager.get_source_id("linebaito")
+        if not source_id:
+            # LINEバイトソースがない場合は作成
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT OR IGNORE INTO sources (name, url) VALUES (?, ?)",
+                    ("linebaito", "https://baito.line.me")
+                )
+                conn.commit()
+            source_id = self.db_manager.get_source_id("linebaito")
 
         if source_id:
             with self.db_manager.get_connection() as conn:

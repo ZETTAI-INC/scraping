@@ -121,13 +121,14 @@ class CrawlWorker(QThread):
     stopped = pyqtSignal()  # 停止完了シグナル
     realtime_update = pyqtSignal(float, int, str)  # elapsed_time, scraped_count, current_task
 
-    def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int, parallel: int, sources: List[str] = None):
+    def __init__(self, service: CrawlService, keywords: List[str], areas: List[str], max_pages: int, parallel: int, sources: List[str] = None, hellowork_parallel: int = 3):
         super().__init__()
         self.service = service
         self.keywords = keywords
         self.areas = areas
         self.max_pages = max_pages
         self.parallel = parallel
+        self.hellowork_parallel = hellowork_parallel
         self.sources = sources or ["townwork"]  # デフォルトはタウンワーク
         self._stop_requested = False
         self._current_scraped_count = 0  # リアルタイム件数追跡用
@@ -234,6 +235,15 @@ class CrawlWorker(QThread):
                         elif source == "hellowork":
                             result = loop.run_until_complete(
                                 self.service.crawl_hellowork(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=self.max_pages,
+                                    parallel=self.hellowork_parallel
+                                )
+                            )
+                        elif source == "linebaito":
+                            result = loop.run_until_complete(
+                                self.service.crawl_linebaito(
                                     keywords=[kw],
                                     areas=[area],
                                     max_pages=self.max_pages
@@ -377,6 +387,11 @@ class MainWindow(QMainWindow):
         self.hellowork_check.setChecked(False)
         self.hellowork_check.setToolTip("ハローワーク求人検索（都道府県選択でフォーム検索）")
         source_layout.addWidget(self.hellowork_check)
+
+        self.linebaito_check = QCheckBox("LINEバイト")
+        self.linebaito_check.setChecked(False)
+        self.linebaito_check.setToolTip("LINEバイト求人検索（React SPA対応）")
+        source_layout.addWidget(self.linebaito_check)
 
         layout.addWidget(source_group)
 
@@ -604,7 +619,7 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
 
-        # ハンドラを作成
+        # GUIハンドラを作成
         self.gui_log_handler = GUILogHandler(self.log_text)
         self.gui_log_handler.setLevel(logging.DEBUG)
 
@@ -612,10 +627,25 @@ class MainWindow(QMainWindow):
         formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
         self.gui_log_handler.setFormatter(formatter)
 
-        # ルートロガーに追加
+        # コンソールハンドラを作成
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.DEBUG)
+        console_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', datefmt='%H:%M:%S')
+        console_handler.setFormatter(console_formatter)
+
+        # ルートロガーの既存ハンドラをクリアして新しいハンドラを追加
         root_logger = logging.getLogger()
+        root_logger.handlers.clear()
         root_logger.addHandler(self.gui_log_handler)
+        root_logger.addHandler(console_handler)
         root_logger.setLevel(logging.DEBUG)
+
+        # 主要なロガーにも伝播を確認
+        for logger_name in ['scrapers', 'src', 'utils', 'scrapers.townwork', 'scrapers.baitoru',
+                            'scrapers.base_scraper', 'src.services', 'src.services.crawl_service']:
+            child_logger = logging.getLogger(logger_name)
+            child_logger.setLevel(logging.DEBUG)
+            child_logger.propagate = True  # 親ロガーに伝播
 
     def append_log(self, message: str):
         """ログメッセージを追加"""
@@ -805,9 +835,22 @@ class MainWindow(QMainWindow):
 
         option_layout.addWidget(QLabel("並列数:"), 1, 0)
         self.parallel_spin = QSpinBox()
-        self.parallel_spin.setRange(1, 12)
+        self.parallel_spin.setRange(1, 2)
         self.parallel_spin.setValue(2)
+        self.parallel_spin.setToolTip("タウンワーク・バイトルの並列処理数（上限2）")
         option_layout.addWidget(self.parallel_spin, 1, 1)
+
+        # 並列数の説明ラベル
+        parallel_desc = QLabel("※ タウンワーク/バイトル: 上限2、ハローワーク: 上限3")
+        parallel_desc.setStyleSheet("color: #666; font-size: 11px;")
+        option_layout.addWidget(parallel_desc, 2, 0, 1, 2)
+
+        option_layout.addWidget(QLabel("ハローワーク並列数:"), 3, 0)
+        self.hellowork_parallel_spin = QSpinBox()
+        self.hellowork_parallel_spin.setRange(1, 3)
+        self.hellowork_parallel_spin.setValue(3)
+        self.hellowork_parallel_spin.setToolTip("ハローワークの詳細取得の並列処理数（上限3）")
+        option_layout.addWidget(self.hellowork_parallel_spin, 3, 1)
 
         layout.addWidget(option_group)
 
@@ -1263,6 +1306,8 @@ class MainWindow(QMainWindow):
             sources.append("baitoru")
         if self.hellowork_check.isChecked():
             sources.append("hellowork")
+        if self.linebaito_check.isChecked():
+            sources.append("linebaito")
         return sources
 
     def start_crawl(self):
@@ -1287,6 +1332,7 @@ class MainWindow(QMainWindow):
 
         max_pages = self.max_pages_spin.value()
         parallel = self.parallel_spin.value()
+        hellowork_parallel = self.hellowork_parallel_spin.value()
 
         # 媒体名リスト（表示用）
         source_names = []
@@ -1298,6 +1344,8 @@ class MainWindow(QMainWindow):
             source_names.append("バイトル")
         if "hellowork" in sources:
             source_names.append("ハローワーク")
+        if "linebaito" in sources:
+            source_names.append("LINEバイト")
 
         # 確認ダイアログ
         total_combinations = len(keywords) * len(areas) * len(sources)
@@ -1335,7 +1383,7 @@ class MainWindow(QMainWindow):
         """)
         self.statusBar.showMessage(f"クローリング中... ({', '.join(source_names)} / {len(keywords)}キーワード x {len(areas)}地域)")
 
-        self.crawl_worker = CrawlWorker(self.service, keywords, areas, max_pages, parallel, sources)
+        self.crawl_worker = CrawlWorker(self.service, keywords, areas, max_pages, parallel, sources, hellowork_parallel)
         self.crawl_worker.finished.connect(self.on_crawl_finished)
         self.crawl_worker.progress.connect(self.on_crawl_progress)
         self.crawl_worker.error.connect(self.on_crawl_error)

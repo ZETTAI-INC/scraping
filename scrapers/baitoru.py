@@ -308,28 +308,63 @@ class BaitoruScraper(BaseScraper):
 
         for page_num in range(1, max_pages + 1):
             if not has_next_page:
-                logger.info(f"No more pages available, stopping at page {page_num - 1}")
+                logger.info(f"[バイトル] 次ページなし、ページ{page_num - 1}で停止")
                 break
 
             url = self.generate_search_url(keyword, area, page_num, category=category)
-            logger.info(f"Fetching page {page_num}: {url}")
+            logger.info(f"[バイトル] ページ{page_num}取得開始: {url}")
 
             success = False
             for attempt in range(2):
                 try:
                     response = await page.goto(
                         url,
-                        wait_until="domcontentloaded",
-                        timeout=30000 if attempt == 0 else 40000
+                        wait_until="networkidle",
+                        timeout=40000 if attempt == 0 else 50000
                     )
 
+                    if response:
+                        logger.info(f"[バイトル] ページ{page_num} HTTPステータス: {response.status}")
+
                     if response and response.status == 404:
-                        logger.warning(f"Page not found: {url}")
+                        logger.warning(f"[バイトル] ページが見つかりません: {url}")
                         has_next_page = False
                         break
 
-                    # ページ読み込み待機
-                    await page.wait_for_timeout(2000)
+                    if response and response.status == 403:
+                        logger.error(f"[バイトル] アクセスブロック (403): {url}")
+                        has_next_page = False
+                        break
+
+                    if response and response.status == 504:
+                        logger.warning(f"[バイトル] ゲートウェイタイムアウト (504): {url} - リトライ {attempt + 1}/2")
+                        if attempt == 0:
+                            await page.wait_for_timeout(5000)
+                            continue
+                        else:
+                            has_next_page = False
+                            break
+
+                    if response and response.status == 400:
+                        logger.warning(f"[バイトル] 不正なリクエスト (400): {url} - リトライ {attempt + 1}/2")
+                        if attempt == 0:
+                            await page.wait_for_timeout(3000)
+                            continue
+                        else:
+                            has_next_page = False
+                            break
+
+                    if response and response.status >= 500:
+                        logger.warning(f"[バイトル] サーバーエラー ({response.status}): {url} - リトライ {attempt + 1}/2")
+                        if attempt == 0:
+                            await page.wait_for_timeout(5000)
+                            continue
+                        else:
+                            has_next_page = False
+                            break
+
+                    # ページ読み込み待機（JSレンダリング用）
+                    await page.wait_for_timeout(3000)
 
                     # 「該当する求人がありません」をチェック
                     no_results = await page.evaluate("""() => {
@@ -341,30 +376,55 @@ class BaitoruScraper(BaseScraper):
                     }""")
 
                     if no_results:
-                        logger.info(f"No results page detected on page {page_num}")
+                        logger.info(f"[バイトル] 結果なしページ検出 ページ{page_num}")
                         has_next_page = False
                         success = True
                         break
 
                     card_selector = self.selectors.get("job_cards", "article.list-jobListDetail")
+                    logger.info(f"[バイトル] セレクタ: {card_selector}")
 
                     # カードが描画されるまで待機
                     selector_ready = False
-                    max_attempts = 4 if page_num == 1 else 2  # 1ページ目は多めにリトライ
+                    max_attempts = 4 if page_num == 1 else 3  # 1ページ目は多めにリトライ
                     for sel_attempt in range(max_attempts):
                         try:
                             await page.wait_for_selector(card_selector, timeout=5000)
                             selector_ready = True
+                            logger.info(f"[バイトル] セレクタ検出成功 (試行 {sel_attempt + 1}/{max_attempts})")
                             break
                         except PlaywrightTimeoutError:
                             logger.warning(
-                                f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/{max_attempts})"
+                                f"[バイトル] セレクタタイムアウト ページ{page_num} (試行 {sel_attempt + 1}/{max_attempts})"
                             )
-                            await page.wait_for_timeout(1000)
+                            await page.wait_for_timeout(1500)
 
                     if not selector_ready:
-                        # 4回タイムアウトしたら結果なしと判断（1ページ目も2ページ目以降も同じ処理）
-                        logger.info(f"Job cards not found on page {page_num} after {max_attempts} attempts, assuming no results")
+                        # フォールバックセレクタを試す
+                        fallback_selectors = [
+                            "article.list-jobListDetail",
+                            "article[class*='jobList']",
+                            "article[class*='job']",
+                            ".list-jobListDetail",
+                            "[class*='jobListDetail']",
+                            "article",
+                        ]
+                        for fb_sel in fallback_selectors:
+                            try:
+                                count = await page.evaluate(f"document.querySelectorAll('{fb_sel}').length")
+                                if count > 0:
+                                    card_selector = fb_sel
+                                    selector_ready = True
+                                    logger.info(f"[バイトル] フォールバックセレクタ検出成功: {fb_sel} ({count}件)")
+                                    break
+                            except Exception as e:
+                                logger.debug(f"[バイトル] フォールバックセレクタ {fb_sel} エラー: {e}")
+                                continue
+
+                    if not selector_ready:
+                        # デバッグ情報を出力
+                        page_title = await page.title()
+                        logger.warning(f"[バイトル] セレクタ未検出 ページ{page_num} 試行{max_attempts}回後. ページタイトル: {page_title}")
                         has_next_page = False
                         success = True
                         break
@@ -402,17 +462,18 @@ class BaitoruScraper(BaseScraper):
                         job_cards = all_cards
 
                     if len(job_cards) == 0:
-                        await page.wait_for_timeout(1000)
+                        await page.wait_for_timeout(1500)
                         all_cards = await page.query_selector_all(card_selector)
                         job_cards = all_cards
+                        logger.info(f"[バイトル] 再取得結果: {len(job_cards)}件")
 
                     if len(job_cards) == 0:
-                        logger.info(f"No job cards found on page {page_num}, assuming end of results")
+                        logger.info(f"[バイトル] 求人カード0件 ページ{page_num}、結果終了と判断")
                         has_next_page = False
                         success = True
                         break
 
-                    logger.info(f"Found {len(job_cards)} jobs on page {page_num} (filtered above pagination)")
+                    logger.info(f"[バイトル] ページ{page_num}で{len(job_cards)}件の求人を発見（ページネーション上のみ）")
 
                     # PRカードをスキップ
                     pr_count = 0

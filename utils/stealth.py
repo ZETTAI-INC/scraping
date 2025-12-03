@@ -4,8 +4,18 @@
 from typing import Dict, Any
 from playwright.async_api import BrowserContext, Page
 import logging
+import random
 
 logger = logging.getLogger(__name__)
+
+# リアルなUser-Agentのリスト
+REAL_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+]
 
 
 class StealthConfig:
@@ -114,11 +124,32 @@ async def create_stealth_context(browser, user_agent: str = None, proxy: Dict = 
     """
     context_args = StealthConfig.get_browser_context_args()
 
+    # User-Agentが指定されていない場合はリアルなものをランダムに選択
     if user_agent:
         context_args["user_agent"] = user_agent
+    else:
+        context_args["user_agent"] = random.choice(REAL_USER_AGENTS)
+        logger.info(f"Using User-Agent: {context_args['user_agent'][:50]}...")
 
     if proxy:
         context_args["proxy"] = proxy
+
+    # 追加のHTTPヘッダーを設定（ボット検出回避）
+    context_args["extra_http_headers"] = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+    }
 
     context = await browser.new_context(**context_args)
 

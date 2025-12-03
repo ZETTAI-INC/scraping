@@ -369,10 +369,28 @@ class BaseScraper(ABC):
             parallel = 2
 
         async with async_playwright() as p:
-            # Stealth設定を適用してブラウザ起動
-            browser = await p.chromium.launch(**StealthConfig.get_launch_args())
+            # Stealth設定を適用してブラウザ起動（表示モードに変更）
+            launch_args = StealthConfig.get_launch_args()
+            launch_args["headless"] = False  # ボット検出回避のため表示モード
+            browser = await p.chromium.launch(**launch_args)
+            logger.info(f"[{self.site_name}] ブラウザ起動完了")
 
             try:
+                # 初回アクセス前にトップページを訪問してCookieを取得
+                base_url = self.site_config.get("base_url", "")
+                if base_url:
+                    logger.info(f"[{self.site_name}] トップページにアクセスしてセッション確立中...")
+                    try:
+                        context = await create_stealth_context(browser)
+                        init_page = await context.new_page()
+                        await StealthConfig.apply_stealth_scripts(init_page)
+                        await init_page.goto(base_url, wait_until="domcontentloaded", timeout=30000)
+                        await init_page.wait_for_timeout(2000)
+                        await context.close()
+                        logger.info(f"[{self.site_name}] セッション確立完了")
+                    except Exception as e:
+                        logger.warning(f"[{self.site_name}] トップページアクセス失敗（続行）: {e}")
+
                 # 全てのページタスクを生成（キーワード×地域×ページ）
                 page_tasks = []
                 for keyword in keywords:
@@ -380,7 +398,7 @@ class BaseScraper(ABC):
                         for page_num in range(1, max_pages + 1):
                             page_tasks.append((keyword, area, page_num))
 
-                logger.info(f"[並列化] 合計 {len(page_tasks)} ページを parallel={parallel} で処理")
+                logger.info(f"[{self.site_name}] 合計 {len(page_tasks)} ページを parallel={parallel} で処理")
 
                 # セマフォで並列数を制限
                 semaphore = asyncio.Semaphore(parallel)

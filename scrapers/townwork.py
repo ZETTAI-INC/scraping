@@ -298,50 +298,73 @@ class TownworkScraper(BaseScraper):
             logger.warning(f"エリア判定エラー: {e}")
             return True  # エラー時は許可
 
+    # エリア名の日本語表記マッピング
+    AREA_NAMES = {
+        "北海道": "北海道",
+        "青森": "青森県", "岩手": "岩手県", "宮城": "宮城県", "秋田": "秋田県", "山形": "山形県", "福島": "福島県",
+        "茨城": "茨城県", "栃木": "栃木県", "群馬": "群馬県", "埼玉": "埼玉県", "千葉": "千葉県", "東京": "東京都", "神奈川": "神奈川県",
+        "新潟": "新潟県", "富山": "富山県", "石川": "石川県", "福井": "福井県", "山梨": "山梨県", "長野": "長野県",
+        "岐阜": "岐阜県", "静岡": "静岡県", "愛知": "愛知県", "三重": "三重県",
+        "滋賀": "滋賀県", "京都": "京都府", "大阪": "大阪府", "兵庫": "兵庫県", "奈良": "奈良県", "和歌山": "和歌山県",
+        "鳥取": "鳥取県", "島根": "島根県", "岡山": "岡山県", "広島": "広島県", "山口": "山口県",
+        "徳島": "徳島県", "香川": "香川県", "愛媛": "愛媛県", "高知": "高知県",
+        "福岡": "福岡県", "佐賀": "佐賀県", "長崎": "長崎県", "熊本": "熊本県", "大分": "大分県", "宮崎": "宮崎県", "鹿児島": "鹿児島県", "沖縄": "沖縄県",
+    }
+
     def generate_search_url(self, keyword: str, area: str, page: int = 1) -> str:
         """
         タウンワーク用の検索URL生成
 
-        職種カテゴリが存在する場合:
-          https://townwork.net/prefectures/{area}/job_search/{category_path}?sc=new&page={page}
-        キーワード検索の場合:
-          https://townwork.net/prefectures/{area}/job_search/?keyword={keyword}&page={page}&sort=1
+        新形式（2024年以降）:
+          https://townwork.net/job_search/kw/{エリア}+{キーワード}/?page={page}
+
+        例: https://townwork.net/job_search/kw/東京都+システム/?page=1
         """
-        # エリア名をローマ字に変換
-        area_codes = self.site_config.get("area_codes", {})
-        area_code = area_codes.get(area, area.lower())
+        from urllib.parse import quote
 
-        # 職種カテゴリが存在するかチェック
-        job_categories = self.site_config.get("job_categories", {})
-        category_path = job_categories.get(keyword)
-
-        # 現在検索中のカテゴリパスとエリアを保存（PR除外用）
-        self._current_category_path = category_path
+        # 現在検索中のエリアを保存（PR除外用）
+        self._current_category_path = None
         self._current_search_area = area
 
-        if category_path:
-            # 職種カテゴリ形式のURL
-            url_pattern = self.site_config.get("search_url_pattern")
-            base_url = url_pattern.format(area=area_code, category_path=category_path, page=page)
-            logger.info(f"Using category URL: {base_url}")
-        else:
-            # キーワード検索形式のURL（フォールバック）
-            url_pattern = self.site_config.get("search_url_pattern_keyword")
-            if not url_pattern:
-                # 後方互換性のため
-                url_pattern = "https://townwork.net/prefectures/{area}/job_search/?keyword={keyword}&page={page}"
-            base_url = url_pattern.format(area=area_code, keyword=keyword, page=page)
+        # エリア名を正式名称に変換（東京→東京都）
+        area_name = self.AREA_NAMES.get(area, area)
 
-            # キーワード検索の場合は新着順パラメータを付与
-            from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
-            parsed = urlparse(base_url)
-            query = dict(parse_qsl(parsed.query))
-            query["sort"] = "1"
-            new_query = urlencode(query)
-            base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
-            logger.info(f"Using keyword URL: {base_url}")
+        # エリア+キーワードをURLエンコード（+は%2Bではなく+のまま）
+        search_query = f"{area_name}+{keyword}"
+        encoded_query = quote(search_query, safe='+')
+
+        # ページパラメータ
+        if page > 1:
+            base_url = f"https://townwork.net/job_search/kw/{encoded_query}/?page={page}"
+        else:
+            base_url = f"https://townwork.net/job_search/kw/{encoded_query}/"
+
+        logger.info(f"[タウンワーク] 検索URL: {base_url}")
 
         return base_url
+
+    async def _establish_session(self, page: Page) -> bool:
+        """
+        タウンワークのセッションを確立（ボット検出回避）
+        トップページを訪問してCookieを取得
+        """
+        try:
+            logger.info("[タウンワーク] セッション確立中...")
+            response = await page.goto(
+                "https://townwork.net/",
+                wait_until="domcontentloaded",
+                timeout=30000
+            )
+            if response and response.status == 200:
+                await page.wait_for_timeout(random.randint(2000, 3000))
+                logger.info("[タウンワーク] セッション確立成功")
+                return True
+            else:
+                logger.warning(f"[タウンワーク] セッション確立失敗: status={response.status if response else 'None'}")
+                return False
+        except Exception as e:
+            logger.warning(f"[タウンワーク] セッション確立エラー: {e}")
+            return False
 
     async def search_jobs(self, page: Page, keyword: str, area: str, max_pages: int = 5) -> List[Dict[str, Any]]:
         """
@@ -349,19 +372,30 @@ class TownworkScraper(BaseScraper):
         """
         all_jobs = []
 
+        # セッション確立（トップページ訪問）
+        await self._establish_session(page)
+
         for page_num in range(1, max_pages + 1):
             url = self.generate_search_url(keyword, area, page_num)
             logger.info(f"Fetching page {page_num}: {url}")
 
             success = False
-            # ページ取得・抽出をリトライ（最大2回）し、取りこぼしを減らす
-            for attempt in range(2):
+            # ページ取得・抽出をリトライ（最大3回）し、取りこぼしを減らす
+            for attempt in range(3):
                 try:
+                    # リトライ時は待機時間を増やす
+                    if attempt > 0:
+                        wait_time = 3000 + attempt * 2000
+                        logger.info(f"[タウンワーク] リトライ前待機: {wait_time}ms")
+                        await page.wait_for_timeout(wait_time)
+
                     response = await page.goto(
                         url,
-                        wait_until="networkidle",
-                        timeout=30000 if attempt == 0 else 40000  # 2回目は少し長めに待つ
+                        wait_until="domcontentloaded",
+                        timeout=30000 + attempt * 10000
                     )
+                    # DOM読み込み後の追加待機
+                    await page.wait_for_timeout(3000 + attempt * 1000)
 
                     if response and response.status == 404:
                         logger.warning(f"Page not found: {url}")
@@ -371,22 +405,22 @@ class TownworkScraper(BaseScraper):
 
                     # カードが描画されるまで数回リトライし、描画遅延による取りこぼしを減らす
                     selector_ready = False
-                    for sel_attempt in range(4):
+                    for sel_attempt in range(5):
                         try:
-                            await page.wait_for_selector(card_selector, timeout=2000 + 500 * sel_attempt)
+                            await page.wait_for_selector(card_selector, timeout=3000 + 500 * sel_attempt)
                             selector_ready = True
                             break
                         except PlaywrightTimeoutError:
                             logger.warning(
-                                f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/4). Retrying after short wait."
+                                f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/5). Retrying after short wait."
                             )
-                            await page.wait_for_timeout(600 + 200 * sel_attempt)
+                            await page.wait_for_timeout(1000 + 300 * sel_attempt)
 
                     if not selector_ready:
                         logger.warning(
-                            f"Job cards selector not ready on page {page_num}; attempt {attempt + 1}/2. Retrying page if attempts remain."
+                            f"Job cards selector not ready on page {page_num}; attempt {attempt + 1}/3. Retrying page if attempts remain."
                         )
-                        if attempt == 0:
+                        if attempt < 2:
                             continue  # もう一度このページをやり直す
 
                     # 求人カードを取得（おすすめ求人セクションを除外）
@@ -399,9 +433,9 @@ class TownworkScraper(BaseScraper):
 
                     # それでも0件なら別のリトライ機会があればやり直す
                     if len(job_cards) == 0:
-                        logger.warning(f"No job cards found on page {page_num} (attempt {attempt + 1}/2).")
-                        if attempt == 0:
-                            await page.wait_for_timeout(1200)
+                        logger.warning(f"No job cards found on page {page_num} (attempt {attempt + 1}/3).")
+                        if attempt < 2:
+                            await page.wait_for_timeout(2000 + attempt * 1000)
                             continue
                         else:
                             logger.info(f"No jobs on page {page_num} after retries; stopping.")
@@ -425,9 +459,9 @@ class TownworkScraper(BaseScraper):
                     break  # ページ処理成功
 
                 except Exception as e:
-                    logger.error(f"Error fetching page {page_num} (attempt {attempt + 1}/2): {e}")
-                    if attempt == 0:
-                        await page.wait_for_timeout(1500)
+                    logger.error(f"Error fetching page {page_num} (attempt {attempt + 1}/3): {e}")
+                    if attempt < 2:
+                        await page.wait_for_timeout(2000 + attempt * 1500)
                         continue
                     else:
                         break
@@ -488,24 +522,29 @@ class TownworkScraper(BaseScraper):
             if salary_elem:
                 data["salary"] = (await salary_elem.inner_text()).strip()
 
-            # アクセス・勤務地
-            access_elem = await card.query_selector("[class*='accessText']")
-            if access_elem:
-                access_text = (await access_elem.inner_text()).strip()
-                # "交通・アクセス " プレフィックスを除去
-                data["location"] = re.sub(r"^交通・アクセス\s*", "", access_text)
+            # アクセス・勤務地（複数のセレクタを試す）
+            location_selectors = [
+                "[class*='accessText']",
+                "[class*='access']",
+                "[class*='location']",
+                "[class*='area']",
+                "[class*='station']",
+            ]
+            for loc_sel in location_selectors:
+                access_elem = await card.query_selector(loc_sel)
+                if access_elem:
+                    access_text = (await access_elem.inner_text()).strip()
+                    if access_text:
+                        # "交通・アクセス " プレフィックスを除去
+                        data["location"] = re.sub(r"^交通・アクセス\s*", "", access_text)
+                        break
 
             # 雇用形態
             job_type_elem = await card.query_selector("[class*='jobType']")
             if job_type_elem:
                 data["employment_type"] = (await job_type_elem.inner_text()).strip()
 
-            # 勤務地が空の求人はおすすめ求人の可能性が高いため除外
-            if not data.get("location"):
-                logger.debug(f"Skipping job with empty location: {data.get('page_url', 'N/A')}")
-                return None
-
-
+            # 勤務地が空でもスキップしない（詳細ページで取得可能）
             return data if data.get("page_url") else None
 
         except Exception as e:
@@ -732,73 +771,135 @@ class TownworkScraper(BaseScraper):
         page: Page,
         keyword: str,
         area: str,
-        page_num: int
+        page_num: int,
+        session_established: bool = False
     ) -> List[Dict[str, Any]]:
         """
         タウンワーク: 1ページ分の求人を取得する実装
         """
         jobs = []
-        url = self.generate_search_url(keyword, area, page_num)
-        logger.info(f"Fetching page {page_num}: {url}")
 
-        # ページ取得・抽出をリトライ（最大2回）
-        for attempt in range(2):
+        # セッション確立（1ページ目のみ）
+        if page_num == 1 and not session_established:
+            await self._establish_session(page)
+
+        url = self.generate_search_url(keyword, area, page_num)
+        logger.info(f"[タウンワーク] ページ{page_num}取得開始: {url}")
+
+        # ページ取得・抽出をリトライ（最大3回）
+        for attempt in range(3):
             try:
                 response = await page.goto(
                     url,
                     wait_until="domcontentloaded",
-                    timeout=60000
+                    timeout=30000
                 )
-                # DOMロード後に追加で待機（JSレンダリング用）
-                await page.wait_for_timeout(2000)
+                # DOM読み込み後に追加で待機（JSレンダリング完了用）
+                await page.wait_for_timeout(5000)
+
+                if response:
+                    logger.info(f"[タウンワーク] ページ{page_num} HTTPステータス: {response.status}")
 
                 if response and response.status == 404:
-                    logger.warning(f"Page not found: {url}")
+                    logger.warning(f"[タウンワーク] ページが見つかりません: {url}")
                     return jobs
 
                 if response and response.status == 403:
-                    logger.error(f"Access blocked (403): {url}")
+                    logger.error(f"[タウンワーク] アクセスブロック (403): {url}")
+                    return jobs
+
+                if response and response.status == 400:
+                    logger.warning(f"[タウンワーク] 不正なリクエスト (400): {url} - リトライ {attempt + 1}/3")
+                    if attempt < 2:
+                        await page.wait_for_timeout(3000 + attempt * 2000)
+                        continue
+                    return jobs
+
+                if response and response.status == 504:
+                    logger.warning(f"[タウンワーク] ゲートウェイタイムアウト (504): {url} - リトライ {attempt + 1}/3")
+                    if attempt < 2:
+                        await page.wait_for_timeout(5000 + attempt * 2000)
+                        continue
+                    return jobs
+
+                if response and response.status == 503:
+                    logger.warning(f"[タウンワーク] サービス利用不可 (503): {url} - リトライ {attempt + 1}/3")
+                    if attempt < 2:
+                        await page.wait_for_timeout(5000 + attempt * 2000)
+                        continue
+                    return jobs
+
+                if response and response.status >= 500:
+                    logger.warning(f"[タウンワーク] サーバーエラー ({response.status}): {url} - リトライ {attempt + 1}/3")
+                    if attempt < 2:
+                        await page.wait_for_timeout(5000 + attempt * 2000)
+                        continue
                     return jobs
 
                 card_selector = self.selectors.get("job_cards", "[class*='jobCard']")
+                logger.info(f"[タウンワーク] セレクタ: {card_selector}")
 
                 # カードが描画されるまで数回リトライ
                 selector_ready = False
                 for sel_attempt in range(4):
                     try:
-                        await page.wait_for_selector(card_selector, timeout=2000 + 500 * sel_attempt)
+                        await page.wait_for_selector(card_selector, timeout=3000 + 500 * sel_attempt)
                         selector_ready = True
+                        logger.info(f"[タウンワーク] セレクタ検出成功 (試行 {sel_attempt + 1}/4)")
                         break
                     except PlaywrightTimeoutError:
                         logger.warning(
-                            f"Job cards selector timeout on page {page_num} (attempt {sel_attempt + 1}/4). Retrying after short wait."
+                            f"[タウンワーク] セレクタタイムアウト ページ{page_num} (試行 {sel_attempt + 1}/4)"
                         )
-                        await page.wait_for_timeout(600 + 200 * sel_attempt)
+                        await page.wait_for_timeout(800 + 200 * sel_attempt)
 
                 if not selector_ready:
+                    # フォールバックセレクタを試す
+                    fallback_selectors = [
+                        "a[href*='jobid_']",
+                        "[class*='JobCard']",
+                        "[class*='job-card']",
+                        "article[class*='job']",
+                    ]
+                    for fb_sel in fallback_selectors:
+                        try:
+                            await page.wait_for_selector(fb_sel, timeout=2000)
+                            card_selector = fb_sel
+                            selector_ready = True
+                            logger.info(f"[タウンワーク] フォールバックセレクタ検出成功: {fb_sel}")
+                            break
+                        except PlaywrightTimeoutError:
+                            continue
+
+                if not selector_ready:
+                    # デバッグ情報を出力
+                    page_title = await page.title()
                     logger.warning(
-                        f"Job cards selector not ready on page {page_num}; attempt {attempt + 1}/2."
+                        f"[タウンワーク] セレクタ未検出 ページ{page_num}; 試行 {attempt + 1}/3. ページタイトル: {page_title}"
                     )
-                    if attempt == 0:
+                    if attempt < 2:
+                        await page.wait_for_timeout(2000)
                         continue
 
                 # 求人カードを取得（おすすめ求人セクションを除外）
                 job_cards = await self._get_search_result_cards(page, card_selector)
+                logger.info(f"[タウンワーク] _get_search_result_cards結果: {len(job_cards)}件")
 
                 # 0件の場合は短い待機のあと再取得
                 if len(job_cards) == 0:
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(1500)
                     job_cards = await self._get_search_result_cards(page, card_selector)
+                    logger.info(f"[タウンワーク] 再取得結果: {len(job_cards)}件")
 
                 if len(job_cards) == 0:
-                    logger.warning(f"No job cards found on page {page_num} (attempt {attempt + 1}/2).")
-                    if attempt == 0:
-                        await page.wait_for_timeout(1200)
+                    logger.warning(f"[タウンワーク] 求人カード0件 ページ{page_num} (試行 {attempt + 1}/3)")
+                    if attempt < 2:
+                        await page.wait_for_timeout(2000 + attempt * 1000)
                         continue
                     else:
                         return jobs
 
-                logger.info(f"Found {len(job_cards)} jobs on page {page_num}")
+                logger.info(f"[タウンワーク] ページ{page_num}で{len(job_cards)}件の求人を発見")
 
                 for card in job_cards:
                     try:
@@ -812,9 +913,9 @@ class TownworkScraper(BaseScraper):
                 return jobs
 
             except Exception as e:
-                logger.error(f"Error fetching page {page_num} (attempt {attempt + 1}/2): {e}")
-                if attempt == 0:
-                    await page.wait_for_timeout(1500)
+                logger.error(f"Error fetching page {page_num} (attempt {attempt + 1}/3): {e}")
+                if attempt < 2:
+                    await page.wait_for_timeout(3000 + attempt * 2000)
                     continue
                 else:
                     return jobs

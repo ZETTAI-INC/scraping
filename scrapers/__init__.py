@@ -4,7 +4,7 @@ from .baitoru import BaitoruScraper
 from .indeed import IndeedScraper
 from .hellowork import HelloworkScraper
 from .mahhabaito import MahhabaitoScraper
-from .linebaito import LinebaitoScraper
+from .linebaito import LineBaitoScraper
 from .rikunavi import RikunaviScraper
 from .mynavi import MynaviScraper
 from .entenshoku import EntenshokuScraper
@@ -18,7 +18,7 @@ __all__ = [
     'IndeedScraper',
     'HelloworkScraper',
     'MahhabaitoScraper',
-    'LinebaitoScraper',
+    'LineBaitoScraper',
     'RikunaviScraper',
     'MynaviScraper',
     'EntenshokuScraper',
