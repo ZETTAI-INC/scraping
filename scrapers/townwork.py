@@ -464,6 +464,52 @@ class TownworkScraper(BaseScraper):
 
         return base_url
 
+    async def _check_no_results(self, page: Page) -> bool:
+        """
+        検索結果が0件かどうかをチェック
+
+        タウンワークで0件の場合に表示されるメッセージを検出して早期リターンする。
+        これにより、セレクタ検出のリトライを避けて次のエリアに進める。
+        """
+        try:
+            # ページのテキストを取得して0件メッセージを検出
+            body_text = await page.inner_text("body")
+
+            # タウンワークの0件メッセージパターン
+            no_results_patterns = [
+                "条件に合う求人がありませんでした",
+                "該当する求人は見つかりませんでした",
+                "検索結果がありません",
+                "求人が見つかりませんでした",
+                "条件に該当する求人はありません",
+                "0件",
+            ]
+
+            for pattern in no_results_patterns:
+                if pattern in body_text:
+                    return True
+
+            # 別の検出方法: 特定のクラスを持つ要素をチェック
+            no_result_selectors = [
+                "[class*='noResult']",
+                "[class*='no-result']",
+                "[class*='empty']",
+                "[class*='notFound']",
+            ]
+
+            for selector in no_result_selectors:
+                elem = await page.query_selector(selector)
+                if elem:
+                    is_visible = await elem.is_visible()
+                    if is_visible:
+                        return True
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"[タウンワーク] 0件チェックエラー（続行）: {e}")
+            return False
+
     async def _establish_session(self, page: Page) -> bool:
         """
         タウンワークのセッションを確立（ボット検出回避）
@@ -959,6 +1005,12 @@ class TownworkScraper(BaseScraper):
 
                 card_selector = self.selectors.get("job_cards", "[class*='jobCard']")
                 logger.info(f"[タウンワーク] セレクタ: {card_selector}")
+
+                # ★ 検索結果0件の早期検出（リトライを避けて次のエリアに進む）
+                no_results_detected = await self._check_no_results(page)
+                if no_results_detected:
+                    logger.info(f"[タウンワーク] 検索結果0件を検出 - {area} × {keyword} (ページ{page_num})")
+                    return jobs  # 空リストを返して次のエリアへ
 
                 # カードが描画されるまで数回リトライ
                 selector_ready = False
