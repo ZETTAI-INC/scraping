@@ -560,13 +560,15 @@ class LineBaitoScraper(BaseScraper):
                         data["company_name"] = company.strip()
                         break
 
-            # 給与
+            # 給与と勤務地を取得
+            # LINEバイトのカード構造: 給与（青字）→ 勤務地（その直下）
             salary_selectors = [
                 "[class*='salary']",
                 "[class*='Salary']",
                 "[class*='wage']",
                 "[class*='pay']",
             ]
+            salary_elem = None
             for sel in salary_selectors:
                 salary_elem = await card.query_selector(sel)
                 if salary_elem:
@@ -575,20 +577,64 @@ class LineBaitoScraper(BaseScraper):
                         data["salary"] = salary.strip()
                         break
 
-            # 勤務地
-            location_selectors = [
-                "[class*='location']",
-                "[class*='Location']",
-                "[class*='area']",
-                "[class*='address']",
-            ]
-            for sel in location_selectors:
-                loc_elem = await card.query_selector(sel)
-                if loc_elem:
-                    location = await loc_elem.inner_text()
-                    if location:
-                        data["location"] = location.strip()
-                        break
+            # 勤務地: 給与要素の次の兄弟要素から取得
+            if salary_elem:
+                try:
+                    # 給与要素の次の兄弟要素を取得
+                    next_sibling = await salary_elem.evaluate_handle("""
+                        (el) => {
+                            // 次の兄弟要素を探す
+                            let next = el.nextElementSibling;
+                            if (next) return next;
+                            // なければ親の次の兄弟
+                            let parent = el.parentElement;
+                            while (parent) {
+                                next = parent.nextElementSibling;
+                                if (next) return next;
+                                parent = parent.parentElement;
+                            }
+                            return null;
+                        }
+                    """)
+                    if next_sibling:
+                        next_elem = next_sibling.as_element()
+                        if next_elem:
+                            location_text = await next_elem.inner_text()
+                            if location_text:
+                                location_text = location_text.strip()
+                                # 給与っぽくないものだけ勤務地として採用
+                                if not re.search(r'(時給|日給|月給|円)', location_text):
+                                    data["location"] = location_text
+                except Exception as e:
+                    logger.debug(f"[LINEバイト] 勤務地取得エラー（兄弟要素）: {e}")
+
+            # フォールバック: セレクタで勤務地を探す
+            if not data.get("location"):
+                location_selectors = [
+                    "[class*='location']",
+                    "[class*='Location']",
+                    "[class*='area']",
+                    "[class*='address']",
+                    "[class*='place']",
+                    "[class*='Place']",
+                ]
+                for sel in location_selectors:
+                    loc_elem = await card.query_selector(sel)
+                    if loc_elem:
+                        location = await loc_elem.inner_text()
+                        if location:
+                            data["location"] = location.strip()
+                            break
+
+            # さらにフォールバック: テキスト候補から駅名・地名を探す
+            if not data.get("location") and unique_candidates:
+                for text in unique_candidates:
+                    # 駅名・地名パターン
+                    if re.search(r'(駅|線|区|市|町|村)', text) and len(text) <= 30:
+                        # 給与ではない
+                        if not re.search(r'(時給|日給|月給|円)', text):
+                            data["location"] = text
+                            break
 
             return data if data.get("page_url") else None
 
