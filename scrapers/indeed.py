@@ -231,6 +231,26 @@ class IndeedScraper(BaseScraper):
 
         return jobs
 
+    async def _check_no_results(self, page: Page) -> bool:
+        """
+        検索結果が0件かどうかをチェック
+        早期にリターンしてセレクタタイムアウトを避ける
+        """
+        try:
+            no_results = await page.evaluate("""() => {
+                const body = document.body.innerText;
+                return body.includes('求人が見つかりませんでした') ||
+                       body.includes('に一致する求人はありません') ||
+                       body.includes('検索条件に一致する求人がありません') ||
+                       body.includes('該当する求人がありません') ||
+                       body.includes('No results found') ||
+                       body.includes('0件の求人');
+            }""")
+            return no_results
+        except Exception as e:
+            logger.debug(f"[Indeed] 0件チェックエラー（続行）: {e}")
+            return False
+
     async def _scrape_single_page_impl(
         self,
         page: Page,
@@ -262,6 +282,12 @@ class IndeedScraper(BaseScraper):
             if response and response.status == 404:
                 logger.warning(f"Page not found: {url}")
                 return jobs
+
+            # ★ 検索結果0件の早期検出（10秒タイムアウトを避けて次のエリアに進む）
+            no_results_detected = await self._check_no_results(page)
+            if no_results_detected:
+                logger.info(f"[Indeed] 検索結果0件を検出 - {area} × {keyword} (ページ{page_num})")
+                return jobs  # 空リストを返して次のエリアへ
 
             card_selector = self.selectors.get("job_cards", ".job_seen_beacon")
 

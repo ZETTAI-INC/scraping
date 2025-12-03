@@ -958,6 +958,26 @@ class BaitoruScraper(BaseScraper):
 
         return jobs
 
+    async def _check_no_results(self, page: Page) -> bool:
+        """
+        検索結果が0件かどうかをチェック
+        早期にリターンしてセレクタタイムアウトを避ける
+        """
+        try:
+            no_results = await page.evaluate("""() => {
+                const body = document.body.innerText;
+                return body.includes('該当する求人がありません') ||
+                       body.includes('条件に合う求人がありませんでした') ||
+                       body.includes('お探しの求人は見つかりませんでした') ||
+                       body.includes('検索結果はありません') ||
+                       body.includes('該当する求人情報がありません') ||
+                       body.includes('条件に該当する求人はありません');
+            }""")
+            return no_results
+        except Exception as e:
+            logger.debug(f"[バイトル] 0件チェックエラー（続行）: {e}")
+            return False
+
     async def _scrape_single_page_impl(
         self,
         page: Page,
@@ -988,6 +1008,12 @@ class BaitoruScraper(BaseScraper):
                 if response and response.status == 403:
                     logger.error(f"Access blocked (403): {url}")
                     return jobs
+
+                # ★ 検索結果0件の早期検出（リトライを避けて次のエリアに進む）
+                no_results_detected = await self._check_no_results(page)
+                if no_results_detected:
+                    logger.info(f"[バイトル] 検索結果0件を検出 - {area} × {keyword} (ページ{page_num})")
+                    return jobs  # 空リストを返して次のエリアへ
 
                 card_selector = self.selectors.get("job_cards", "article.list-jobListDetail")
 

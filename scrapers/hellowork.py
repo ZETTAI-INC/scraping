@@ -487,6 +487,29 @@ class HelloworkScraper(BaseScraper):
         except Exception:
             return False
 
+    async def _check_no_results(self, page: Page) -> bool:
+        """検索結果が0件かどうかをチェック
+        早期にリターンしてセレクタタイムアウトを避ける
+        """
+        try:
+            page_text = await page.inner_text('body')
+            no_results_patterns = [
+                "該当する求人情報はありません",
+                "該当する求人がありません",
+                "条件に合う求人がありません",
+                "検索結果がありません",
+                "求人情報が見つかりません",
+                "0件の求人",
+                "0 件",
+            ]
+            for pattern in no_results_patterns:
+                if pattern in page_text:
+                    return True
+            return False
+        except Exception as e:
+            self.logger.debug(f"[ハローワーク] 0件チェックエラー（続行）: {e}")
+            return False
+
     def _get_prefecture_code(self, area: str) -> Optional[str]:
         """エリア名から都道府県コードを取得"""
         if area in PREFECTURE_CODES:
@@ -551,6 +574,11 @@ class HelloworkScraper(BaseScraper):
             if await self._check_for_error_page(page):
                 self.logger.error("検索後にエラーページが表示されました。")
                 return all_jobs
+
+            # ★ 検索結果0件の早期検出（タイムアウトを避けて次のエリアに進む）
+            if await self._check_no_results(page):
+                self.logger.info(f"[ハローワーク] 検索結果0件を検出 - {area} × {keyword}")
+                return all_jobs  # 空リストを返して次のエリアへ
 
             for page_num in range(1, max_pages + 1):
                 self.logger.info(f"ページ {page_num}/{max_pages} を処理中...")
