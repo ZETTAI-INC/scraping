@@ -1100,7 +1100,7 @@ class MainWindow(QMainWindow):
 
         control_layout.addWidget(QLabel("過去"))
         self.analysis_count_spin = QSpinBox()
-        self.analysis_count_spin.setRange(1, 100)
+        self.analysis_count_spin.setRange(1, 9999)  # 上限撤廃
         self.analysis_count_spin.setValue(20)
         self.analysis_count_spin.setSuffix(" 回")
         self.analysis_count_spin.setMinimumWidth(80)
