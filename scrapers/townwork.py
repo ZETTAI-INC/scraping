@@ -311,35 +311,156 @@ class TownworkScraper(BaseScraper):
         "福岡": "福岡県", "佐賀": "佐賀県", "長崎": "長崎県", "熊本": "熊本県", "大分": "大分県", "宮崎": "宮崎県", "鹿児島": "鹿児島県", "沖縄": "沖縄県",
     }
 
+    # 都道府県のローマ字マッピング（カテゴリ検索URL用）
+    PREF_ROMAN = {
+        "北海道": "hokkaidou",
+        "青森": "aomori", "岩手": "iwate", "宮城": "miyagi", "秋田": "akita", "山形": "yamagata", "福島": "fukushima",
+        "茨城": "ibaraki", "栃木": "tochigi", "群馬": "gunma", "埼玉": "saitama", "千葉": "chiba", "東京": "tokyo", "神奈川": "kanagawa",
+        "新潟": "niigata", "富山": "toyama", "石川": "ishikawa", "福井": "fukui", "山梨": "yamanashi", "長野": "nagano",
+        "岐阜": "gifu", "静岡": "shizuoka", "愛知": "aichi", "三重": "mie",
+        "滋賀": "shiga", "京都": "kyouto", "大阪": "oosaka", "兵庫": "hyougo", "奈良": "nara", "和歌山": "wakayama",
+        "鳥取": "tottori", "島根": "shimane", "岡山": "okayama", "広島": "hiroshima", "山口": "yamaguchi",
+        "徳島": "tokushima", "香川": "kagawa", "愛媛": "ehime", "高知": "kouchi",
+        "福岡": "fukuoka", "佐賀": "saga", "長崎": "nagasaki", "熊本": "kumamoto", "大分": "ooita", "宮崎": "miyazaki", "鹿児島": "kagoshima", "沖縄": "okinawa",
+    }
+
+    # 職種カテゴリマッピング（キーワード → カテゴリコード）
+    # 形式: "キーワード": ("大カテゴリ", "小カテゴリ" or None)
+    JOB_CATEGORIES = {
+        # IT・Web・ゲームエンジニア (oc-013)
+        "SE": ("oc-013", "omc-0102"),
+        "システムエンジニア": ("oc-013", "omc-0102"),
+        "エンジニア": ("oc-013", None),
+        "IT": ("oc-013", None),
+        "プログラマー": ("oc-013", "omc-0103"),
+        "プログラマ": ("oc-013", "omc-0103"),
+        "Web": ("oc-013", None),
+        "ゲーム": ("oc-013", None),
+        # 飲食・フードサービス (oc-001)
+        "飲食": ("oc-001", None),
+        "調理": ("oc-001", None),
+        "ホール": ("oc-001", None),
+        "キッチン": ("oc-001", None),
+        # 営業・販売 (oc-002)
+        "営業": ("oc-002", None),
+        "販売": ("oc-002", None),
+        "接客": ("oc-002", None),
+        "店長": ("oc-002", None),
+        "コンビニ": ("oc-002", "omc-0014"),
+        # 旅行・レジャー・イベント (oc-003)
+        "イベント": ("oc-003", None),
+        "レジャー": ("oc-003", None),
+        "旅行": ("oc-003", None),
+        # 倉庫・物流管理 (oc-004)
+        "物流": ("oc-004", None),
+        "倉庫": ("oc-004", None),
+        "軽作業": ("oc-004", None),
+        # 警備・保安 (oc-005)
+        "警備": ("oc-005", None),
+        # 経営・事業企画・人事・事務 (oc-006)
+        "事務": ("oc-006", None),
+        "経理": ("oc-006", None),
+        "総務": ("oc-006", None),
+        "人事": ("oc-006", None),
+        "秘書": ("oc-006", None),
+        "受付": ("oc-006", None),
+        "データ入力": ("oc-006", "omc-0040"),
+        # マーケティング・広告・宣伝 (oc-007)
+        "マーケティング": ("oc-007", None),
+        "企画": ("oc-007", None),
+        # 保育士・教員・講師 (oc-008)
+        "保育": ("oc-008", None),
+        "教育": ("oc-008", None),
+        "講師": ("oc-008", None),
+        # ドライバー・引越し・配送 (oc-009)
+        "ドライバー": ("oc-009", None),
+        "配送": ("oc-009", None),
+        # 介護・福祉 (oc-010)
+        "介護": ("oc-010", None),
+        # 医療・看護師・薬剤師 (oc-011)
+        "医療": ("oc-011", None),
+        "看護": ("oc-011", None),
+        "薬剤師": ("oc-011", None),
+        # メディア・クリエイター (oc-012)
+        "デザイン": ("oc-012", None),
+        # 清掃・美化 (oc-016)
+        "清掃": ("oc-016", None),
+        # 美容師 (oc-017)
+        "美容": ("oc-017", None),
+        # 建設・土木・施工 (oc-018)
+        "建設": ("oc-018", None),
+        "土木": ("oc-018", None),
+        # 製造・工場 (oc-019)
+        "製造": ("oc-019", None),
+        "工場": ("oc-019", None),
+        # コールセンター (事務系として分類)
+        "コールセンター": ("oc-006", None),
+    }
+
     def generate_search_url(self, keyword: str, area: str, page: int = 1) -> str:
         """
         タウンワーク用の検索URL生成
 
-        新形式（2024年以降）:
-          https://townwork.net/job_search/kw/{エリア}+{キーワード}/?page={page}
+        カテゴリ対応版:
+          キーワードがJOB_CATEGORIESにある場合:
+            https://townwork.net/prefectures/{都道府県ローマ字}/job_search/oc-{大カテゴリ}/omc-{小カテゴリ}/?sc=new
+          それ以外（フリーキーワード検索）:
+            https://townwork.net/job_search/kw/{エリア}+{キーワード}/?sc=new
 
-        例: https://townwork.net/job_search/kw/東京都+システム/?page=1
+        ※ sc=new は新着順ソート用パラメータ
+
+        例:
+          石川+SE → https://townwork.net/prefectures/ishikawa/job_search/oc-013/omc-0102/?sc=new
+          東京+システム → https://townwork.net/job_search/kw/東京都+システム/?sc=new
         """
         from urllib.parse import quote
 
         # 現在検索中のエリアを保存（PR除外用）
-        self._current_category_path = None
         self._current_search_area = area
 
-        # エリア名を正式名称に変換（東京→東京都）
-        area_name = self.AREA_NAMES.get(area, area)
+        # 都道府県のローマ字を取得
+        pref_roman = self.PREF_ROMAN.get(area)
 
-        # エリア+キーワードをURLエンコード（+は%2Bではなく+のまま）
-        search_query = f"{area_name}+{keyword}"
-        encoded_query = quote(search_query, safe='+')
+        # キーワードがカテゴリマッピングにあるかチェック
+        category_info = self.JOB_CATEGORIES.get(keyword)
 
-        # ページパラメータ
-        if page > 1:
-            base_url = f"https://townwork.net/job_search/kw/{encoded_query}/?page={page}"
+        if pref_roman and category_info:
+            # カテゴリ検索URLを生成
+            oc_code, omc_code = category_info
+            self._current_category_path = oc_code
+
+            if omc_code:
+                # 小カテゴリあり
+                category_path = f"{oc_code}/{omc_code}"
+            else:
+                # 大カテゴリのみ
+                category_path = oc_code
+
+            # ページパラメータ + 新着順ソート
+            if page > 1:
+                base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/{category_path}/?page={page}&sc=new"
+            else:
+                base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/{category_path}/?sc=new"
+
+            logger.info(f"[タウンワーク] カテゴリ検索URL: {base_url}")
         else:
-            base_url = f"https://townwork.net/job_search/kw/{encoded_query}/"
+            # フリーキーワード検索にフォールバック
+            self._current_category_path = None
 
-        logger.info(f"[タウンワーク] 検索URL: {base_url}")
+            # エリア名を正式名称に変換（東京→東京都）
+            area_name = self.AREA_NAMES.get(area, area)
+
+            # エリア+キーワードをURLエンコード（+は%2Bではなく+のまま）
+            search_query = f"{area_name}+{keyword}"
+            encoded_query = quote(search_query, safe='+')
+
+            # ページパラメータ + 新着順ソート
+            if page > 1:
+                base_url = f"https://townwork.net/job_search/kw/{encoded_query}/?page={page}&sc=new"
+            else:
+                base_url = f"https://townwork.net/job_search/kw/{encoded_query}/?sc=new"
+
+            logger.info(f"[タウンワーク] キーワード検索URL: {base_url}")
 
         return base_url
 
