@@ -368,20 +368,30 @@ class LineBaitoScraper(BaseScraper):
             no_new_items_count = 0
             reached_recommend_section = False
 
-            while len(all_jobs) < max_items and scroll_count < max_scroll_attempts:
-                # 「地域のおすすめ」セクションに到達したかチェック
-                recommend_section = await page.query_selector("text=地域のおすすめ")
-                if not recommend_section:
-                    # 別のパターンも試す
-                    recommend_section = await page.query_selector("text=おすすめの求人")
-                if not recommend_section:
-                    recommend_section = await page.query_selector("text=こちらもおすすめ")
+            # 検索結果終端を示すセクション名
+            END_SECTION_TEXTS = [
+                "地域のおすすめ",
+                "おすすめの求人",
+                "こちらもおすすめ",
+                "最近チェックした求人",
+                "閲覧履歴",
+            ]
 
-                if recommend_section:
-                    # おすすめセクションが画面内に表示されているかチェック
-                    is_visible = await recommend_section.is_visible()
+            while len(all_jobs) < max_items and scroll_count < max_scroll_attempts:
+                # 検索結果終端セクションに到達したかチェック
+                end_section = None
+                end_section_name = None
+                for section_text in END_SECTION_TEXTS:
+                    end_section = await page.query_selector(f"text={section_text}")
+                    if end_section:
+                        end_section_name = section_text
+                        break
+
+                if end_section:
+                    # セクションが画面内に表示されているかチェック
+                    is_visible = await end_section.is_visible()
                     if is_visible:
-                        logger.info(f"[LINEバイト] 「地域のおすすめ」セクションに到達。検索結果の終端です。")
+                        logger.info(f"[LINEバイト] 「{end_section_name}」セクションに到達。検索結果の終端です。")
                         reached_recommend_section = True
                         break
 
@@ -399,25 +409,36 @@ class LineBaitoScraper(BaseScraper):
                     try:
                         card = job_cards[i]
 
-                        # カードが「おすすめ」セクション内かどうかチェック
+                        # カードが終端セクション内かどうかチェック
                         is_in_recommend = await card.evaluate("""
                             (el) => {
+                                const endSections = [
+                                    '地域のおすすめ',
+                                    'おすすめの求人',
+                                    'こちらもおすすめ',
+                                    '最近チェックした求人',
+                                    '閲覧履歴'
+                                ];
                                 let current = el;
                                 for (let i = 0; i < 10; i++) {
                                     if (!current.parentElement) break;
                                     current = current.parentElement;
                                     const text = current.innerText || '';
-                                    if (text.includes('地域のおすすめ') ||
-                                        text.includes('おすすめの求人') ||
-                                        text.includes('こちらもおすすめ')) {
-                                        // このカードがおすすめセクションの後にあるかチェック
-                                        const rect = el.getBoundingClientRect();
-                                        const sections = document.querySelectorAll('*');
-                                        for (const sec of sections) {
-                                            if (sec.innerText && sec.innerText.includes('地域のおすすめ')) {
-                                                const secRect = sec.getBoundingClientRect();
-                                                if (rect.top > secRect.top) {
-                                                    return true;
+                                    for (const sectionText of endSections) {
+                                        if (text.includes(sectionText)) {
+                                            // このカードが終端セクションの後にあるかチェック
+                                            const rect = el.getBoundingClientRect();
+                                            const sections = document.querySelectorAll('*');
+                                            for (const sec of sections) {
+                                                if (sec.innerText) {
+                                                    for (const st of endSections) {
+                                                        if (sec.innerText.includes(st)) {
+                                                            const secRect = sec.getBoundingClientRect();
+                                                            if (rect.top > secRect.top) {
+                                                                return true;
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
