@@ -368,32 +368,58 @@ class LineBaitoScraper(BaseScraper):
             no_new_items_count = 0
             reached_recommend_section = False
 
-            # 検索結果終端を示すセクション名
+            # 検索結果終端を示すセクション名（検索結果の下に表示されるもの）
             END_SECTION_TEXTS = [
                 "地域のおすすめ",
                 "おすすめの求人",
                 "こちらもおすすめ",
+            ]
+            # ページ上部に表示される可能性があるセクション（スクロール後のみチェック）
+            TOP_SECTION_TEXTS = [
                 "最近チェックした求人",
                 "閲覧履歴",
             ]
 
             while len(all_jobs) < max_items and scroll_count < max_scroll_attempts:
                 # 検索結果終端セクションに到達したかチェック
-                end_section = None
-                end_section_name = None
-                for section_text in END_SECTION_TEXTS:
-                    end_section = await page.query_selector(f"text={section_text}")
-                    if end_section:
-                        end_section_name = section_text
-                        break
+                # ただし、最低1回はスクロールしてから、かつ求人を取得した後のみチェック
+                if scroll_count > 0 and len(all_jobs) > 0:
+                    end_section = None
+                    end_section_name = None
 
-                if end_section:
-                    # セクションが画面内に表示されているかチェック
-                    is_visible = await end_section.is_visible()
-                    if is_visible:
-                        logger.info(f"[LINEバイト] 「{end_section_name}」セクションに到達。検索結果の終端です。")
-                        reached_recommend_section = True
-                        break
+                    # 検索結果の下に表示される終端セクションをチェック
+                    for section_text in END_SECTION_TEXTS:
+                        end_section = await page.query_selector(f"text={section_text}")
+                        if end_section:
+                            end_section_name = section_text
+                            break
+
+                    # 上部セクションは、スクロール後かつ一定数取得後のみチェック
+                    if not end_section and scroll_count >= 2 and len(all_jobs) >= 10:
+                        for section_text in TOP_SECTION_TEXTS:
+                            section_elem = await page.query_selector(f"text={section_text}")
+                            if section_elem:
+                                # このセクションがビューポートの下半分にあるかチェック
+                                is_below = await section_elem.evaluate("""
+                                    (el) => {
+                                        const rect = el.getBoundingClientRect();
+                                        const viewportHeight = window.innerHeight;
+                                        // ビューポートの下半分より下にある場合のみtrue
+                                        return rect.top > viewportHeight * 0.5;
+                                    }
+                                """)
+                                if is_below:
+                                    end_section = section_elem
+                                    end_section_name = section_text
+                                    break
+
+                    if end_section:
+                        # セクションが画面内に表示されているかチェック
+                        is_visible = await end_section.is_visible()
+                        if is_visible:
+                            logger.info(f"[LINEバイト] 「{end_section_name}」セクションに到達。検索結果の終端です。")
+                            reached_recommend_section = True
+                            break
 
                 # 現在表示されている求人カードを取得
                 job_cards = await page.query_selector_all(used_selector)
@@ -409,37 +435,29 @@ class LineBaitoScraper(BaseScraper):
                     try:
                         card = job_cards[i]
 
-                        # カードが終端セクション内かどうかチェック
+                        # カードが終端セクション（地域のおすすめ等）の後にあるかチェック
+                        # 閲覧履歴はページ上部にあるため除外
                         is_in_recommend = await card.evaluate("""
                             (el) => {
                                 const endSections = [
                                     '地域のおすすめ',
                                     'おすすめの求人',
-                                    'こちらもおすすめ',
-                                    '最近チェックした求人',
-                                    '閲覧履歴'
+                                    'こちらもおすすめ'
                                 ];
-                                let current = el;
-                                for (let i = 0; i < 10; i++) {
-                                    if (!current.parentElement) break;
-                                    current = current.parentElement;
-                                    const text = current.innerText || '';
+                                const rect = el.getBoundingClientRect();
+
+                                // ページ内の終端セクションを探す
+                                const allElements = document.querySelectorAll('*');
+                                for (const sec of allElements) {
+                                    const secText = sec.innerText || '';
                                     for (const sectionText of endSections) {
-                                        if (text.includes(sectionText)) {
-                                            // このカードが終端セクションの後にあるかチェック
-                                            const rect = el.getBoundingClientRect();
-                                            const sections = document.querySelectorAll('*');
-                                            for (const sec of sections) {
-                                                if (sec.innerText) {
-                                                    for (const st of endSections) {
-                                                        if (sec.innerText.includes(st)) {
-                                                            const secRect = sec.getBoundingClientRect();
-                                                            if (rect.top > secRect.top) {
-                                                                return true;
-                                                            }
-                                                        }
-                                                    }
-                                                }
+                                        // セクションヘッダーを探す（短いテキストで完全一致に近いもの）
+                                        if (secText.trim() === sectionText ||
+                                            (secText.includes(sectionText) && secText.length < 50)) {
+                                            const secRect = sec.getBoundingClientRect();
+                                            // このカードが終端セクションより下にある場合
+                                            if (rect.top > secRect.bottom) {
+                                                return true;
                                             }
                                         }
                                     }
