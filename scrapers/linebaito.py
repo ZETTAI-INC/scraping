@@ -355,6 +355,36 @@ class LineBaitoScraper(BaseScraper):
             # React SPAなのでレンダリングを待つ
             await page.wait_for_timeout(3000)
 
+            # 検索結果が0件かどうかをチェック
+            no_results_patterns = [
+                "text=検索結果 0件",
+                "text=0件の求人",
+                "text=該当する求人がありません",
+                "text=見つかりませんでした",
+                "text=条件に一致する求人はありません",
+            ]
+            for pattern in no_results_patterns:
+                no_result_elem = await page.query_selector(pattern)
+                if no_result_elem:
+                    is_visible = await no_result_elem.is_visible()
+                    if is_visible:
+                        logger.info(f"[LINEバイト] 検索結果が0件です")
+                        return {'jobs': [], 'raw_count': 0}
+
+            # ページテキストから検索結果件数を確認
+            try:
+                body_text = await page.inner_text("body")
+                # 「検索結果 X件」のパターンを探す
+                result_match = re.search(r'検索結果\s*(\d+)\s*件', body_text)
+                if result_match:
+                    result_count = int(result_match.group(1))
+                    if result_count == 0:
+                        logger.info(f"[LINEバイト] 検索結果が0件です")
+                        return {'jobs': [], 'raw_count': 0}
+                    logger.info(f"[LINEバイト] 検索結果: {result_count}件")
+            except Exception as e:
+                logger.debug(f"[LINEバイト] 検索結果件数の取得に失敗: {e}")
+
             # 求人カードのセレクタを特定
             used_selector = await self._find_job_card_selector(page)
             if not used_selector:
