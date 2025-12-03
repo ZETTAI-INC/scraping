@@ -98,7 +98,7 @@ import numpy as np
 
 # 日本語フォント設定（Windows用）
 # インポート時に設定することで、全てのグラフに適用される
-plt.rcParams['font.family'] = ['MS Gothic', 'Yu Gothic', 'Meiryo', 'Hiragino Sans', 'sans-serif']
+plt.rcParams['font.family'] = ['Yu Gothic', 'Meiryo', 'MS Gothic', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False  # マイナス記号の文字化け対策
 
 # パス設定
