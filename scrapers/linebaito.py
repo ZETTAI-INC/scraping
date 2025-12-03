@@ -366,8 +366,25 @@ class LineBaitoScraper(BaseScraper):
             max_scroll_attempts = max_pages + 5  # 余裕を持たせる
             previous_count = 0
             no_new_items_count = 0
+            reached_recommend_section = False
 
             while len(all_jobs) < max_items and scroll_count < max_scroll_attempts:
+                # 「地域のおすすめ」セクションに到達したかチェック
+                recommend_section = await page.query_selector("text=地域のおすすめ")
+                if not recommend_section:
+                    # 別のパターンも試す
+                    recommend_section = await page.query_selector("text=おすすめの求人")
+                if not recommend_section:
+                    recommend_section = await page.query_selector("text=こちらもおすすめ")
+
+                if recommend_section:
+                    # おすすめセクションが画面内に表示されているかチェック
+                    is_visible = await recommend_section.is_visible()
+                    if is_visible:
+                        logger.info(f"[LINEバイト] 「地域のおすすめ」セクションに到達。検索結果の終端です。")
+                        reached_recommend_section = True
+                        break
+
                 # 現在表示されている求人カードを取得
                 job_cards = await page.query_selector_all(used_selector)
                 current_count = len(job_cards)
@@ -381,6 +398,40 @@ class LineBaitoScraper(BaseScraper):
 
                     try:
                         card = job_cards[i]
+
+                        # カードが「おすすめ」セクション内かどうかチェック
+                        is_in_recommend = await card.evaluate("""
+                            (el) => {
+                                let current = el;
+                                for (let i = 0; i < 10; i++) {
+                                    if (!current.parentElement) break;
+                                    current = current.parentElement;
+                                    const text = current.innerText || '';
+                                    if (text.includes('地域のおすすめ') ||
+                                        text.includes('おすすめの求人') ||
+                                        text.includes('こちらもおすすめ')) {
+                                        // このカードがおすすめセクションの後にあるかチェック
+                                        const rect = el.getBoundingClientRect();
+                                        const sections = document.querySelectorAll('*');
+                                        for (const sec of sections) {
+                                            if (sec.innerText && sec.innerText.includes('地域のおすすめ')) {
+                                                const secRect = sec.getBoundingClientRect();
+                                                if (rect.top > secRect.top) {
+                                                    return true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                return false;
+                            }
+                        """)
+
+                        if is_in_recommend:
+                            logger.info(f"[LINEバイト] おすすめセクション内のカードをスキップ")
+                            reached_recommend_section = True
+                            break
+
                         job_data = await self._extract_card_data(card, page)
                         if job_data and job_data.get("page_url"):
                             job_id = job_data.get("job_id")
@@ -394,6 +445,9 @@ class LineBaitoScraper(BaseScraper):
                     except Exception as e:
                         logger.debug(f"[LINEバイト] カード抽出エラー: {e}")
                         continue
+
+                if reached_recommend_section:
+                    break
 
                 self._report_count(len(all_jobs))
 
@@ -419,7 +473,10 @@ class LineBaitoScraper(BaseScraper):
 
                 scroll_count += 1
 
-            logger.info(f"[LINEバイト] 取得完了: {len(all_jobs)}件")
+            if reached_recommend_section:
+                logger.info(f"[LINEバイト] 検索結果終了（おすすめセクション到達）: {len(all_jobs)}件")
+            else:
+                logger.info(f"[LINEバイト] 取得完了: {len(all_jobs)}件")
 
         except Exception as e:
             logger.error(f"[LINEバイト] 検索エラー: {e}")
