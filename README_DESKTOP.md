@@ -129,6 +129,47 @@ build.bat
 
 出力先: `dist/JobCollector.exe`
 
+## テスト
+
+### テスト実行方法
+
+```bash
+# 通常テスト（E2E除く） - 推奨
+run_tests.bat
+
+# 高速テストのみ（URL生成、マッピング）
+run_tests.bat quick
+
+# E2Eテスト（実際のサイトアクセス）
+run_tests.bat e2e
+
+# 全テスト実行（E2E含む）
+run_tests.bat all
+
+# カバレッジレポート付き
+run_tests.bat coverage
+```
+
+### テスト構成
+
+| ファイル | 内容 | テスト数 |
+|---------|------|---------|
+| `test_url_generation.py` | URL生成テスト | 36 |
+| `test_mappings.py` | マッピングテスト | 23 |
+| `test_scraping_e2e.py` | E2Eテスト（実サイトアクセス） | 15+ |
+
+### テスト対象スクレイパー
+
+- タウンワーク (`townwork.py`)
+- バイトル (`baitoru.py`)
+- LINEバイト (`linebaito.py`)
+- Indeed (`indeed.py`)
+- ハローワーク (`hellowork.py`)
+
+### デグレ防止
+
+定期的に `run_tests.bat quick` を実行して、URL生成やマッピングに問題がないか確認してください。
+
 ## フィルタリングルール
 
 CSV出力時に以下の条件で自動フィルタリングされます：
@@ -235,3 +276,8 @@ MIT License
   - 全検索URLに `sc=new` パラメータを追加
 - **ドキュメント: URL生成パターンを追記**
   - 先祖返り防止のため、タウンワークのURL形式を詳細にドキュメント化
+- **テストスイート追加**
+  - pytest による自動テスト（59テストケース）
+  - URL生成テスト、マッピングテスト、E2Eテスト
+  - `run_tests.bat` でワンクリック実行可能
+  - デグレ防止のための定期実行を推奨
