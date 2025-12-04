@@ -587,6 +587,12 @@ class LineBaitoScraper(BaseScraper):
 
                         job_data = await self._extract_card_data(card, page)
                         if job_data and job_data.get("page_url"):
+                            # 派遣形式の求人はスキップ
+                            employment_type = job_data.get("employment_type", "")
+                            if employment_type == "派遣社員":
+                                logger.debug(f"[LINEバイト] 派遣求人をスキップ: {job_data.get('title', '')[:30]}")
+                                continue
+
                             job_id = job_data.get("job_id")
                             if job_id and job_id not in seen_job_ids:
                                 seen_job_ids.add(job_id)
@@ -916,34 +922,123 @@ class LineBaitoScraper(BaseScraper):
         """詳細ページから追加情報を取得"""
         detail_data = {}
 
+        # 都道府県パターン（住所の先頭を判別）
+        prefecture_pattern = re.compile(
+            r'^(北海道|青森県?|岩手県?|宮城県?|秋田県?|山形県?|福島県?|'
+            r'茨城県?|栃木県?|群馬県?|埼玉県?|千葉県?|東京都?|神奈川県?|'
+            r'新潟県?|富山県?|石川県?|福井県?|山梨県?|長野県?|'
+            r'岐阜県?|静岡県?|愛知県?|三重県?|'
+            r'滋賀県?|京都府?|大阪府?|兵庫県?|奈良県?|和歌山県?|'
+            r'鳥取県?|島根県?|岡山県?|広島県?|山口県?|'
+            r'徳島県?|香川県?|愛媛県?|高知県?|'
+            r'福岡県?|佐賀県?|長崎県?|熊本県?|大分県?|宮崎県?|鹿児島県?|沖縄県?)'
+        )
+
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(3000)
 
-            # ページ全体のテキストを取得
-            body_text = await page.inner_text("body")
+            # セクション要素を取得
+            sections = await page.query_selector_all("[class*='StyledDetailSection']")
 
-            # 給与
-            salary_match = re.search(r"(時給|日給|月給)[：:\s]*([0-9,]+円[^\n]*)", body_text)
-            if salary_match:
-                detail_data["salary"] = salary_match.group(0).strip()
+            in_access_section = False
+            found_location_title = False
 
-            # 勤務地
-            location_match = re.search(r"勤務地[：:\s]*([^\n]+)", body_text)
-            if location_match:
-                detail_data["location"] = location_match.group(1).strip()
+            for section in sections:
+                try:
+                    text = await section.inner_text()
+                    text = text.strip()
+                    lines = [l.strip() for l in text.split('\n') if l.strip()]
 
-            # 勤務時間
-            time_match = re.search(r"勤務時間[：:\s]*([^\n]+)", body_text)
-            if time_match:
-                detail_data["working_hours"] = time_match.group(1).strip()
+                    if not lines:
+                        continue
 
-            # 仕事内容
-            desc_elem = await page.query_selector("[class*='description'], [class*='Description']")
-            if desc_elem:
-                desc = await desc_elem.inner_text()
-                if desc:
-                    detail_data["job_description"] = desc.strip()[:500]
+                    title = lines[0]
+
+                    # 「アクセス」セクションを検出
+                    if title == "アクセス":
+                        in_access_section = True
+                        continue
+
+                    # 「所在地」タイトルを検出（アクセスセクション内）
+                    if in_access_section and title == "所在地":
+                        found_location_title = True
+                        continue
+
+                    # 所在地タイトルの次のセクションが詳細住所
+                    if found_location_title and in_access_section:
+                        # 会社名 + 住所の形式を解析
+                        # 例: "ユースタイルケア 大阪　大阪市港区磯路中通1-35-6　シッチフィールド磯路ビル3F"
+                        full_text = lines[0] if lines else ""
+
+                        # 都道府県で始まる部分を住所として抽出
+                        for pref in ["北海道", "青森", "岩手", "宮城", "秋田", "山形", "福島",
+                                    "茨城", "栃木", "群馬", "埼玉", "千葉", "東京", "神奈川",
+                                    "新潟", "富山", "石川", "福井", "山梨", "長野",
+                                    "岐阜", "静岡", "愛知", "三重",
+                                    "滋賀", "京都", "大阪", "兵庫", "奈良", "和歌山",
+                                    "鳥取", "島根", "岡山", "広島", "山口",
+                                    "徳島", "香川", "愛媛", "高知",
+                                    "福岡", "佐賀", "長崎", "熊本", "大分", "宮崎", "鹿児島", "沖縄"]:
+                            idx = full_text.find(pref)
+                            if idx >= 0:
+                                # 都道府県以降を住所として抽出
+                                detail_data["location"] = full_text[idx:].strip()
+                                # 会社名部分も抽出
+                                if idx > 0:
+                                    company_part = full_text[:idx].strip()
+                                    # 末尾の空白や全角スペースを除去
+                                    company_part = company_part.rstrip('　 ')
+                                    if company_part:
+                                        detail_data["company_name"] = company_part
+                                break
+
+                        in_access_section = False
+                        found_location_title = False
+                        continue
+
+                    # 給与セクション
+                    if title == "給与":
+                        if len(lines) > 1:
+                            detail_data["salary"] = lines[1]
+
+                    # 勤務時間セクション
+                    elif title == "勤務時間・シフト":
+                        if len(lines) > 1:
+                            # 「勤務期間」の次の行
+                            for i, line in enumerate(lines):
+                                if "シフト・勤務時間" in line or "勤務時間" in line:
+                                    if i + 1 < len(lines):
+                                        detail_data["working_hours"] = lines[i + 1]
+                                        break
+
+                    # 仕事内容セクション
+                    elif title == "仕事内容":
+                        if len(lines) > 1:
+                            detail_data["job_description"] = " ".join(lines[1:])[:500]
+
+                    # 応募資格セクション
+                    elif title == "応募資格":
+                        if len(lines) > 1:
+                            detail_data["qualifications"] = " ".join(lines[1:])[:300]
+
+                except Exception as e:
+                    logger.debug(f"[LINEバイト] セクション処理エラー: {e}")
+                    continue
+
+            # フォールバック: セクションから取得できなかった場合
+            if not detail_data.get("location"):
+                body_text = await page.inner_text("body")
+                # 「所在地」の次の行から住所を探す
+                lines = body_text.split('\n')
+                for i, line in enumerate(lines):
+                    if '所在地' in line.strip() and line.strip() == '所在地':
+                        # 次の行を確認
+                        if i + 1 < len(lines):
+                            next_line = lines[i + 1].strip()
+                            if next_line and prefecture_pattern.search(next_line):
+                                detail_data["location"] = next_line
+                                break
 
         except Exception as e:
             logger.error(f"[LINEバイト] 詳細取得エラー: {e}")
