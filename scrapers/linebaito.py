@@ -612,6 +612,42 @@ class LineBaitoScraper(BaseScraper):
                 if match:
                     data["job_id"] = match.group(1)
 
+            # 雇用形態を取得（Badge__StyledRoot クラスを持つ要素から）
+            # <div class="Badge__StyledRoot-sc-2lgk8d-0 ...">アルバイト</div>
+            EMPLOYMENT_TYPES = {"アルバイト", "パート", "正社員", "契約社員", "派遣社員", "業務委託", "インターン"}
+            employment_type_selectors = [
+                "[class*='Badge__StyledRoot']",
+                "[class*='badge']",
+                "[class*='Badge']",
+                "[class*='tag']",
+                "[class*='Tag']",
+                "[class*='label']",
+                "[class*='Label']",
+                "[class*='employment']",
+                "[class*='Employment']",
+            ]
+            for sel in employment_type_selectors:
+                badge_elems = await card.query_selector_all(sel)
+                for badge_elem in badge_elems:
+                    try:
+                        badge_text = await badge_elem.inner_text()
+                        badge_text = badge_text.strip()
+                        # 雇用形態のキーワードにマッチするか
+                        if badge_text in EMPLOYMENT_TYPES:
+                            data["employment_type"] = badge_text
+                            break
+                        # 部分一致も確認
+                        for emp_type in EMPLOYMENT_TYPES:
+                            if emp_type in badge_text:
+                                data["employment_type"] = emp_type
+                                break
+                        if data.get("employment_type"):
+                            break
+                    except:
+                        continue
+                if data.get("employment_type"):
+                    break
+
             # スキップすべきバッジ/ラベルテキスト
             SKIP_TEXTS = {"NEW", "新着", "急募", "PR", "おすすめ", "人気", "注目", "ア", "派", "契", "正"}
 
