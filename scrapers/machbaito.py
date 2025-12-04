@@ -432,6 +432,14 @@ class MachbaitoScraper(BaseScraper):
         try:
             data = {"site": "マッハバイト"}
 
+            # 雇用形態を抽出（CSSセレクタで直接取得）
+            # <li class="p-works-work-header-tag misc">アルバイト・パート</li>
+            emp_type_elem = await card.query_selector("li.p-works-work-header-tag, .p-works-work-header-tag")
+            if emp_type_elem:
+                emp_type_text = await emp_type_elem.inner_text()
+                if emp_type_text:
+                    data["employment_type"] = emp_type_text.strip()
+
             # リンクを取得
             href = await card.get_attribute("href")
             if not href:
@@ -488,15 +496,16 @@ class MachbaitoScraper(BaseScraper):
                 "シニア歓迎", "Wワーク", "副業OK", "扶養内OK", "新着",
             ]
 
-            # 雇用形態を抽出（カード上部に表示されるため最初の数行をチェック）
-            for line in lines[:5]:  # 最初の5行のみチェック
-                for emp_type in employment_type_patterns:
-                    if emp_type in line:
-                        # 雇用形態のみを抽出（行全体ではなく）
-                        data["employment_type"] = emp_type
+            # 雇用形態を抽出（CSSセレクタで取得できなかった場合のフォールバック）
+            if "employment_type" not in data:
+                for line in lines[:5]:  # 最初の5行のみチェック
+                    for emp_type in employment_type_patterns:
+                        if emp_type in line:
+                            # 雇用形態のみを抽出（行全体ではなく）
+                            data["employment_type"] = emp_type
+                            break
+                    if "employment_type" in data:
                         break
-                if "employment_type" in data:
-                    break
 
             # タイトル除外用のパターン（雇用形態+条件マーカー）
             title_skip_patterns = employment_type_patterns + condition_markers
