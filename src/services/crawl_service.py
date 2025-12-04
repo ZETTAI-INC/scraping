@@ -2060,8 +2060,8 @@ def _save_crawl_log_machbaito(service, result: Dict[str, Any]):
         with service.db_manager.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT OR IGNORE INTO sources (name, url) VALUES (?, ?)",
-                ("machbaito", "https://machbaito.jp")
+                "INSERT OR IGNORE INTO sources (name, display_name, base_url, is_active, priority) VALUES (?, ?, ?, ?, ?)",
+                ("machbaito", "マッハバイト", "https://machbaito.jp", 1, 6)
             )
             conn.commit()
         source_id = service.db_manager.get_source_id("machbaito")

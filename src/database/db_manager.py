@@ -32,7 +32,7 @@ class DatabaseManager:
             ("indeed", "Indeed", "https://jp.indeed.com", 1, 1),
             ("hellowork", "ハローワーク", "https://www.hellowork.mhlw.go.jp", 1, 2),
             ("baitoru", "バイトル", "https://www.baitoru.com", 1, 4),
-            ("mahhabaito", "マッハバイト", "https://j-sen.jp", 1, 5),
+            ("machbaito", "マッハバイト", "https://machbaito.jp", 1, 5),
             ("linebaito", "LINEバイト", "https://baito.line.me", 1, 6),
             ("rikunavi", "リクナビ", "https://job.rikunabi.com", 1, 7),
             ("mynavi", "マイナビ", "https://tenshoku.mynavi.jp", 1, 8),
