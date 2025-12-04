@@ -2038,7 +2038,7 @@ def _prepare_machbaito_job_record(job: Dict[str, Any]) -> Dict[str, Any]:
         "address_pref": job.get("location", ""),
         "postal_code": "",
         "salary": job.get("salary", ""),
-        "employment_type": "",
+        "employment_type": job.get("employment_type", ""),
         "page_url": job.get("page_url", ""),
         "crawled_at": job.get("crawled_at"),
         "working_hours": job.get("working_hours", ""),
