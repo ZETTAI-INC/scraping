@@ -231,6 +231,22 @@ class LineBaitoScraper(BaseScraper):
         area_clean = area.rstrip("都府県")
         return self.PREFECTURE_IDS.get(area_clean, self.PREFECTURE_IDS.get(area, 13))
 
+    async def _get_search_result_count(self, page: Page) -> Optional[int]:
+        """
+        検索結果件数を取得
+        「検索結果 XX件」のパターンから件数を抽出
+        """
+        try:
+            body_text = await page.inner_text("body")
+            result_match = re.search(r'検索結果\s*([\d,]+)\s*件', body_text)
+            if result_match:
+                count_str = result_match.group(1).replace(',', '')
+                return int(count_str)
+            return None
+        except Exception as e:
+            logger.debug(f"[LINEバイト] 検索結果件数取得エラー: {e}")
+            return None
+
     async def _check_no_results(self, page: Page) -> bool:
         """
         検索結果が0件かどうかをチェック
@@ -253,12 +269,9 @@ class LineBaitoScraper(BaseScraper):
                         return True
 
             # 2. 件数パターンのチェック
-            body_text = await page.inner_text("body")
-            result_match = re.search(r'検索結果\s*(\d+)\s*件', body_text)
-            if result_match:
-                result_count = int(result_match.group(1))
-                if result_count == 0:
-                    return True
+            result_count = await self._get_search_result_count(page)
+            if result_count is not None and result_count == 0:
+                return True
 
             return False
         except Exception as e:
@@ -393,6 +406,14 @@ class LineBaitoScraper(BaseScraper):
             if await self._check_no_results(page):
                 logger.info(f"[LINEバイト] 検索結果0件を検出 - {area} × {keyword}")
                 return {'jobs': [], 'raw_count': 0}
+
+            # ★ 検索結果件数を取得（おすすめセクションの求人を除外するため）
+            search_result_count = await self._get_search_result_count(page)
+            if search_result_count is not None:
+                logger.info(f"[LINEバイト] 検索結果件数: {search_result_count}件")
+                # 検索結果件数とmax_itemsの小さい方を上限とする
+                max_items = min(max_items, search_result_count)
+                logger.info(f"[LINEバイト] 取得上限を {max_items}件 に設定")
 
             # 求人カードのセレクタを特定
             used_selector = await self._find_job_card_selector(page)
