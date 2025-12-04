@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 class MachbaitoScraper(BaseScraper):
     """マッハバイト用スクレイパー"""
 
-    # JIS都道府県コード (1-47)
+    # JIS都道府県コード (1-47) と全域検索用cityコード
+    # URL形式: /prefectures{code}/city_{city_code}/jobtag_{id}?q[sk]=1
     PREFECTURE_CODES = {
         "北海道": 1,
         "青森": 2, "岩手": 3, "宮城": 4, "秋田": 5, "山形": 6, "福島": 7,
@@ -29,6 +30,58 @@ class MachbaitoScraper(BaseScraper):
         "鳥取": 31, "島根": 32, "岡山": 33, "広島": 34, "山口": 35,
         "徳島": 36, "香川": 37, "愛媛": 38, "高知": 39,
         "福岡": 40, "佐賀": 41, "長崎": 42, "熊本": 43, "大分": 44, "宮崎": 45, "鹿児島": 46, "沖縄": 47,
+    }
+
+    # 都道府県全域検索用のcityコード
+    # 各都道府県の「すべての求人を見る」に対応するコード
+    PREFECTURE_ALL_CITY_CODES = {
+        1: 1,       # 北海道
+        2: 98,      # 青森
+        3: 117,     # 岩手
+        4: 142,     # 宮城
+        5: 166,     # 秋田
+        6: 186,     # 山形
+        7: 208,     # 福島
+        8: 234,     # 茨城
+        9: 274,     # 栃木
+        10: 295,    # 群馬
+        11: 316,    # 埼玉
+        12: 366,    # 千葉
+        13: 409,    # 東京
+        14: 469,    # 神奈川
+        15: 496,    # 新潟
+        16: 527,    # 富山
+        17: 540,    # 石川
+        18: 557,    # 福井
+        19: 574,    # 山梨
+        20: 593,    # 長野
+        21: 627,    # 岐阜
+        22: 658,    # 静岡
+        23: 691,    # 愛知
+        24: 737,    # 三重
+        25: 759,    # 滋賀
+        26: 778,    # 京都
+        27: 799,    # 大阪
+        28: 838,    # 兵庫
+        29: 876,    # 奈良
+        30: 896,    # 和歌山
+        31: 912,    # 鳥取
+        32: 922,    # 島根
+        33: 938,    # 岡山
+        34: 964,    # 広島
+        35: 984,    # 山口
+        36: 1003,   # 徳島
+        37: 1020,   # 香川
+        38: 1034,   # 愛媛
+        39: 1053,   # 高知
+        40: 1071,   # 福岡
+        41: 1113,   # 佐賀
+        42: 1131,   # 長崎
+        43: 1149,   # 熊本
+        44: 1174,   # 大分
+        45: 1192,   # 宮崎
+        46: 1210,   # 鹿児島
+        47: 1239,   # 沖縄
     }
 
     # 職種カテゴリID (/jobtag_ エンドポイント用)
@@ -263,10 +316,10 @@ class MachbaitoScraper(BaseScraper):
         マッハバイト用の検索URL生成
 
         URL形式:
-        https://machbaito.jp/prefectures{code}/jobtag_{id}?q[sk]=1&page={ページ}
+        https://machbaito.jp/prefectures{code}/city_{city_code}/jobtag_{id}?q[sk]=1&page={ページ}
 
-        例: https://machbaito.jp/prefectures6/jobtag_94?q[sk]=1
-            → 山形県の販売カテゴリ、新着順
+        例: https://machbaito.jp/prefectures13/city_409/jobtag_426?q[sk]=1
+            → 東京都全域のエンジニアカテゴリ、新着順
 
         Args:
             keyword: 検索キーワード
@@ -274,10 +327,11 @@ class MachbaitoScraper(BaseScraper):
             page: ページ番号
         """
         prefecture_code = self._get_prefecture_code(area)
+        city_code = self.PREFECTURE_ALL_CITY_CODES.get(prefecture_code, prefecture_code)
         job_category_ids = self._get_job_category_ids(keyword)
 
-        # ベースURL構築
-        base_url = f"https://machbaito.jp/prefectures{prefecture_code}"
+        # ベースURL構築（都道府県 + 全域cityコード）
+        base_url = f"https://machbaito.jp/prefectures{prefecture_code}/city_{city_code}"
 
         # 職種カテゴリIDがある場合はjobtag_を追加
         if job_category_ids:
