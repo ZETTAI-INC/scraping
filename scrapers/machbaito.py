@@ -466,23 +466,40 @@ class MachbaitoScraper(BaseScraper):
                     if "location" not in data:
                         data["location"] = line
 
-            # 雇用形態パターン（タイトルから除外）
-            employment_types = [
-                "アルバイト", "パート", "正社員", "契約社員", "派遣社員",
-                "派遣", "業務委託", "短期", "長期", "単発", "日払い",
-                "週払い", "フリーター", "学生歓迎", "主婦歓迎", "未経験OK",
-                "未経験歓迎", "経験者歓迎", "経験者優遇", "高校生OK",
-                "シニア歓迎", "Wワーク", "副業OK", "扶養内OK",
+            # 雇用形態パターン（実際の雇用形態のみ）
+            employment_type_patterns = [
+                "派遣労働者",
+                "アルバイト・パート",
+                "アルバイト",
+                "パート",
+                "正社員",
+                "契約社員",
+                "派遣社員",
+                "派遣",
+                "業務委託",
+                "登録制",
             ]
 
-            # 雇用形態を抽出
-            for line in lines:
-                for emp_type in employment_types:
-                    if emp_type in line and len(line) <= 20:
-                        data["employment_type"] = line
+            # 条件マーカー（タイトルから除外するが、雇用形態ではない）
+            condition_markers = [
+                "短期", "長期", "単発", "日払い", "週払い",
+                "フリーター", "学生歓迎", "主婦歓迎", "未経験OK",
+                "未経験歓迎", "経験者歓迎", "経験者優遇", "高校生OK",
+                "シニア歓迎", "Wワーク", "副業OK", "扶養内OK", "新着",
+            ]
+
+            # 雇用形態を抽出（カード上部に表示されるため最初の数行をチェック）
+            for line in lines[:5]:  # 最初の5行のみチェック
+                for emp_type in employment_type_patterns:
+                    if emp_type in line:
+                        # 雇用形態のみを抽出（行全体ではなく）
+                        data["employment_type"] = emp_type
                         break
                 if "employment_type" in data:
                     break
+
+            # タイトル除外用のパターン（雇用形態+条件マーカー）
+            title_skip_patterns = employment_type_patterns + condition_markers
 
             # タイトル（最初の意味のある行）
             skip_patterns = ["NEW", "急募", "PR", "おすすめ", "人気"]
@@ -491,16 +508,16 @@ class MachbaitoScraper(BaseScraper):
                     continue
                 if len(line) < 3:
                     continue
-                # 給与・駅名・雇用形態はスキップ
+                # 給与・駅名はスキップ
                 if re.search(r'(時給|日給|月給|駅|線)', line):
                     continue
-                # 雇用形態のみの行はスキップ
-                is_employment_only = False
-                for emp_type in employment_types:
-                    if line == emp_type or (emp_type in line and len(line) <= 15):
-                        is_employment_only = True
+                # 雇用形態・条件マーカーのみの行はスキップ
+                is_skip_pattern = False
+                for pattern in title_skip_patterns:
+                    if line == pattern or (pattern in line and len(line) <= 15):
+                        is_skip_pattern = True
                         break
-                if is_employment_only:
+                if is_skip_pattern:
                     continue
                 data["title"] = line
                 break
