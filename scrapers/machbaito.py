@@ -576,12 +576,11 @@ class MachbaitoScraper(BaseScraper):
                 break
 
             # 会社名を探す
-            # 1. CSSセレクタで試す
+            # 1. CSSセレクタで試す（h3を優先）
             company_selectors = [
+                "h3",  # 店舗名が通常h3にある
                 ".p-works-work-body-name",
                 "[class*='company']",
-                "[class*='name']",
-                "h3",
                 "h2",
             ]
             for selector in company_selectors:
@@ -636,7 +635,16 @@ class MachbaitoScraper(BaseScraper):
 
             # 4. 店舗名パターン（「○○店」「○○支店」など）
             if "company_name" not in data:
-                store_patterns = [r'.+店[（\(]', r'.+店/', r'.+支店', r'.+営業所', r'.+事業所']
+                store_patterns = [
+                    r'.+店$',      # ○○店（行末）
+                    r'.+店[（\(]', # ○○店（
+                    r'.+店/',      # ○○店/
+                    r'.+支店',     # ○○支店
+                    r'.+営業所',   # ○○営業所
+                    r'.+事業所',   # ○○事業所
+                    r'.+本店',     # ○○本店
+                    r'.+支社',     # ○○支社
+                ]
                 for line in lines:
                     for pattern in store_patterns:
                         if re.search(pattern, line):
