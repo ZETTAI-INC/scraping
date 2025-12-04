@@ -480,14 +480,27 @@ class MachbaitoScraper(BaseScraper):
                 logger.warning("[マッハバイト] 求人カードが見つかりません")
                 return jobs
 
+            skipped_carousel = 0
             for card in job_cards:
                 try:
+                    # カルーセル（おすすめ）セクションのカードはスキップ
+                    # これらは検索結果ではなく推薦求人のため構造が異なる
+                    parent_class = await card.evaluate(
+                        "el => el.parentElement ? el.parentElement.className : ''"
+                    )
+                    if 'carousel' in parent_class.lower():
+                        skipped_carousel += 1
+                        continue
+
                     job_data = await self._extract_card_data(card, page)
                     if job_data and job_data.get("page_url"):
                         jobs.append(job_data)
                 except Exception as e:
                     logger.debug(f"[マッハバイト] カード抽出エラー: {e}")
                     continue
+
+            if skipped_carousel > 0:
+                logger.info(f"[マッハバイト] カルーセル項目をスキップ: {skipped_carousel}件")
 
         except Exception as e:
             logger.error(f"[マッハバイト] 求人抽出エラー: {e}")
@@ -507,20 +520,19 @@ class MachbaitoScraper(BaseScraper):
             # 部分一致用キーワード
             emp_keywords = ["アルバイト", "パート", "正社員", "派遣", "契約", "業務委託", "登録制"]
 
-            # 親要素を取得して雇用形態を探す
-            # カードがaタグの場合、親のli要素から雇用形態を取得
+            # 親要素・祖父母要素を取得して雇用形態を探す
+            # カードがaタグの場合、親/祖父母のli要素から雇用形態を取得
+            employment_selectors = [
+                "li.p-works-work-header-tag",
+                ".p-works-work-header-tag",
+                "[class*='header-tag']",
+            ]
             try:
-                # 親要素を取得（複数レベル試す）
+                # 親要素から検索
                 parent_elem = await card.evaluate_handle("el => el.parentElement")
                 if parent_elem:
                     parent = parent_elem.as_element()
-                    if parent:
-                        # 親要素から雇用形態セレクタを探す
-                        employment_selectors = [
-                            "li.p-works-work-header-tag",
-                            ".p-works-work-header-tag",
-                            "[class*='header-tag']",
-                        ]
+                    if parent and "employment_type" not in data:
                         for selector in employment_selectors:
                             try:
                                 emp_elem = await parent.query_selector(selector)
@@ -537,8 +549,33 @@ class MachbaitoScraper(BaseScraper):
                                             break
                             except:
                                 continue
+
+                # 祖父母要素からも検索
+                if "employment_type" not in data:
+                    grandparent_elem = await card.evaluate_handle(
+                        "el => el.parentElement?.parentElement"
+                    )
+                    if grandparent_elem:
+                        grandparent = grandparent_elem.as_element()
+                        if grandparent:
+                            for selector in employment_selectors:
+                                try:
+                                    emp_elem = await grandparent.query_selector(selector)
+                                    if emp_elem:
+                                        emp_text = await emp_elem.inner_text()
+                                        if emp_text:
+                                            emp_text = emp_text.strip()
+                                            for kw in emp_keywords:
+                                                if kw in emp_text:
+                                                    data["employment_type"] = emp_text
+                                                    logger.debug(f"[マッハバイト] 雇用形態(祖父母): {emp_text}")
+                                                    break
+                                            if "employment_type" in data:
+                                                break
+                                except:
+                                    continue
             except Exception as e:
-                logger.debug(f"[マッハバイト] 親要素取得エラー: {e}")
+                logger.debug(f"[マッハバイト] 親/祖父母要素取得エラー: {e}")
 
             # カード内からも試す
             if "employment_type" not in data:
@@ -571,27 +608,32 @@ class MachbaitoScraper(BaseScraper):
                         continue
 
             # カード内テキストからも雇用形態を探す（フォールバック）
+            card_text = await card.inner_text()
+            all_lines = [l.strip() for l in card_text.split('\n') if l.strip()]
+
             if "employment_type" not in data:
-                card_text = await card.inner_text()
-                first_lines = card_text.split('\n')[:10]
-                for line in first_lines:
-                    line = line.strip()
-                    if not line:
-                        continue
+                for line in all_lines[:15]:
                     # 完全一致パターンを優先
                     for pattern in emp_full_patterns:
-                        if pattern == line or line == pattern:
+                        if pattern == line:
                             data["employment_type"] = line
-                            logger.debug(f"[マッハバイト] 雇用形態(完全一致): {line}")
                             break
                     if "employment_type" in data:
                         break
-                    # 部分一致（短い行のみ）
-                    if len(line) <= 30:
+
+                    # 行の先頭に雇用形態がある場合（例: "正社員promesa_..."）
+                    for pattern in emp_full_patterns:
+                        if line.startswith(pattern):
+                            data["employment_type"] = pattern
+                            break
+                    if "employment_type" in data:
+                        break
+
+                    # 部分一致（短い行のみ、給与以外）
+                    if len(line) <= 20 and not re.search(r'(時給|日給|月給|円)', line):
                         for kw in emp_keywords:
                             if kw in line:
                                 data["employment_type"] = line
-                                logger.debug(f"[マッハバイト] 雇用形態(部分一致): {line}")
                                 break
                         if "employment_type" in data:
                             break
@@ -613,12 +655,8 @@ class MachbaitoScraper(BaseScraper):
                 if match:
                     data["job_id"] = match.group(1)
 
-            # カード内のテキストを取得
-            card_text = await card.inner_text()
-            lines = [line.strip() for line in card_text.split('\n') if line.strip()]
-
-            # テキストから情報を抽出
-            for i, line in enumerate(lines):
+            # テキストから情報を抽出（all_linesは既に定義済み）
+            for i, line in enumerate(all_lines):
                 # 給与パターン
                 if re.search(r'(時給|日給|月給|年収)', line):
                     data["salary"] = line
@@ -640,11 +678,37 @@ class MachbaitoScraper(BaseScraper):
                 "フリーター", "学生歓迎", "主婦歓迎", "未経験OK",
                 "未経験歓迎", "経験者歓迎", "経験者優遇", "高校生OK",
                 "シニア歓迎", "Wワーク", "副業OK", "扶養内OK", "新着",
+                # 店舗・業態タイプ
+                "ドラッグストア", "コンビニ", "スーパー", "百貨店", "デパート",
+                "ホームセンター", "家電量販店", "アパレル", "雑貨店",
+                "居酒屋", "カフェ", "レストラン", "ファミレス", "ファストフード",
+                "ホテル", "旅館", "病院", "介護施設", "保育園", "学習塾",
+                # 複合カテゴリ
+                "飲食・フード", "販売・サービス", "オフィス・事務", "軽作業・物流",
+                "医療・介護", "教育・塾", "IT・エンジニア", "営業・販売",
+                # 職種カテゴリ（短い）
+                "販売", "事務", "接客", "清掃", "警備", "配送", "物流",
+                "製造", "工場", "軽作業", "仕分け", "検品", "梱包",
+                "調理", "キッチン", "ホール", "デリバリー",
+                "営業", "受付", "データ入力", "コールセンター",
+                "介護", "看護", "保育", "医療",
             ]
+
+            # 都道府県パターン
+            prefecture_pattern = re.compile(
+                r'^(北海道|青森県?|岩手県?|宮城県?|秋田県?|山形県?|福島県?|'
+                r'茨城県?|栃木県?|群馬県?|埼玉県?|千葉県?|東京都?|神奈川県?|'
+                r'新潟県?|富山県?|石川県?|福井県?|山梨県?|長野県?|'
+                r'岐阜県?|静岡県?|愛知県?|三重県?|'
+                r'滋賀県?|京都府?|大阪府?|兵庫県?|奈良県?|和歌山県?|'
+                r'鳥取県?|島根県?|岡山県?|広島県?|山口県?|'
+                r'徳島県?|香川県?|愛媛県?|高知県?|'
+                r'福岡県?|佐賀県?|長崎県?|熊本県?|大分県?|宮崎県?|鹿児島県?|沖縄県?)$'
+            )
 
             # タイトル（最初の意味のある行）
             skip_patterns = ["NEW", "急募", "PR", "おすすめ", "人気"]
-            for line in lines:
+            for line in all_lines:
                 if line in skip_patterns:
                     continue
                 if len(line) < 3:
@@ -652,10 +716,15 @@ class MachbaitoScraper(BaseScraper):
                 # 給与・駅名はスキップ
                 if re.search(r'(時給|日給|月給|駅|線)', line):
                     continue
+                # 都道府県のみの行はスキップ
+                if prefecture_pattern.match(line):
+                    continue
                 # 雇用形態・条件マーカーのみの行はスキップ
+                # 完全一致、またはパターン+少数文字のみの場合スキップ
+                # 「ホール」はスキップ、「ホール係」はスキップ、「ホールスタッフ」はスキップしない
                 is_skip_pattern = False
                 for pattern in title_skip_patterns:
-                    if line == pattern or (pattern in line and len(line) <= 15):
+                    if line == pattern or (pattern in line and len(line) <= len(pattern) + 2):
                         is_skip_pattern = True
                         break
                 if is_skip_pattern:
@@ -664,6 +733,17 @@ class MachbaitoScraper(BaseScraper):
                 break
 
             # 会社名を探す
+            # ヘルパー関数: 雇用形態プレフィックスを除去
+            def strip_employment_prefix(text):
+                for emp in emp_full_patterns:
+                    if text.startswith(emp):
+                        stripped = text[len(emp):].strip()
+                        # 区切り文字も除去
+                        if stripped.startswith(('_', '/', '　', ' ')):
+                            stripped = stripped[1:].strip()
+                        return stripped if stripped else text
+                return text
+
             # 1. CSSセレクタで試す（h3を優先）
             company_selectors = [
                 "h3",  # 店舗名が通常h3にある
@@ -677,9 +757,9 @@ class MachbaitoScraper(BaseScraper):
                     if company_elem:
                         company_text = await company_elem.inner_text()
                         if company_text:
-                            company_text = company_text.strip()
-                            # 給与や雇用形態でないことを確認
-                            if not re.search(r'(時給|日給|月給|アルバイト|パート|正社員|派遣)', company_text):
+                            company_text = strip_employment_prefix(company_text.strip())
+                            # 給与でないことを確認
+                            if not re.search(r'(時給|日給|月給|円$)', company_text):
                                 if len(company_text) >= 3:
                                     data["company_name"] = company_text
                                     break
@@ -699,8 +779,8 @@ class MachbaitoScraper(BaseScraper):
                                     if company_elem:
                                         company_text = await company_elem.inner_text()
                                         if company_text:
-                                            company_text = company_text.strip()
-                                            if not re.search(r'(時給|日給|月給|アルバイト|パート|正社員|派遣)', company_text):
+                                            company_text = strip_employment_prefix(company_text.strip())
+                                            if not re.search(r'(時給|日給|月給|円$)', company_text):
                                                 if len(company_text) >= 3:
                                                     data["company_name"] = company_text
                                                     break
@@ -713,10 +793,11 @@ class MachbaitoScraper(BaseScraper):
             if "company_name" not in data:
                 # 法人格パターン
                 company_patterns = ["株式会社", "有限会社", "合同会社", "社団法人", "財団法人"]
-                for line in lines:
+                for line in all_lines:
+                    line_clean = strip_employment_prefix(line)
                     for pattern in company_patterns:
-                        if pattern in line:
-                            data["company_name"] = line
+                        if pattern in line_clean:
+                            data["company_name"] = line_clean
                             break
                     if "company_name" in data:
                         break
@@ -727,21 +808,64 @@ class MachbaitoScraper(BaseScraper):
                     r'.+店$',      # ○○店（行末）
                     r'.+店[（\(]', # ○○店（
                     r'.+店/',      # ○○店/
+                    r'.+店\s',     # ○○店 スペース続き
+                    r'.+店\[',     # ○○店[ID] 形式
+                    r'.+店\d',     # ○○店1, ○○店5 等
                     r'.+支店',     # ○○支店
                     r'.+営業所',   # ○○営業所
                     r'.+事業所',   # ○○事業所
                     r'.+本店',     # ○○本店
                     r'.+支社',     # ○○支社
                 ]
-                for line in lines:
+                for line in all_lines:
+                    line_clean = strip_employment_prefix(line)
                     for pattern in store_patterns:
-                        if re.search(pattern, line):
+                        if re.search(pattern, line_clean):
                             # 給与や条件でないことを確認
-                            if not re.search(r'(時給|日給|月給|円|駅|線|分)', line):
-                                data["company_name"] = line
+                            if not re.search(r'(時給|日給|月給|円|駅|線|分)', line_clean):
+                                # 末尾の[ID]を除去
+                                company = re.sub(r'\[\d+\]$', '', line_clean).strip()
+                                data["company_name"] = company
                                 break
                     if "company_name" in data:
                         break
+
+            # 5. カッコ付き会社名（「○○(説明)」形式）
+            if "company_name" not in data:
+                for line in all_lines:
+                    line_clean = strip_employment_prefix(line)
+                    # カッコ付きの会社名パターン（例: アースサポート和光(訪問入浴オペレーター)）
+                    if re.search(r'.+[（(].+[）)]$', line_clean) and len(line_clean) >= 8:
+                        # 給与パターンを除外（数字付きのみ: 時給1000円、日給8000円など）
+                        if not re.search(r'(時給|日給|月給)\d|円[〜～]|円$|駅\s|線\s', line_clean):
+                            data["company_name"] = line_clean
+                            break
+
+            # 6. スラッシュを含む行（ID付き会社名）
+            if "company_name" not in data:
+                for line in all_lines:
+                    line_clean = strip_employment_prefix(line)
+                    # スラッシュ区切りの会社名/ID形式
+                    if '/' in line_clean and len(line_clean) >= 10:
+                        # 給与・条件・短い行を除外
+                        if not re.search(r'(時給|日給|月給|円|駅|分|OK|歓迎)', line_clean):
+                            data["company_name"] = line_clean
+                            break
+
+            # 7. 最終フォールバック: タイトルの次の行を会社名として取得
+            if "company_name" not in data and data.get("title"):
+                title = data["title"]
+                title_idx = None
+                for i, line in enumerate(all_lines):
+                    if line == title:
+                        title_idx = i
+                        break
+                if title_idx is not None and title_idx + 1 < len(all_lines):
+                    next_line = all_lines[title_idx + 1]
+                    # 給与・条件・職種ラベルを除外
+                    if not re.search(r'(時給|日給|月給|円|駅|線|分$|職種|給与|勤務地)', next_line):
+                        if len(next_line) >= 3 and len(next_line) <= 50:
+                            data["company_name"] = next_line
 
             return data if data.get("page_url") else None
 
