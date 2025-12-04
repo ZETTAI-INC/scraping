@@ -200,7 +200,10 @@ class MachbaitoScraper(BaseScraper):
         マッハバイト用の検索URL生成
 
         URL形式:
-        https://machbaito.jp/prefectures{都道府県コード}?q[ji][]={職種ID}&q[sk]=1&page={ページ}
+        https://machbaito.jp/prefectures{都道府県コード}/jobtag_{職種ID}?q[sk]=1&page={ページ}
+
+        例: https://machbaito.jp/prefectures13/jobtag_94?q[sk]=1
+            → 東京都の販売カテゴリ、新着順
 
         Args:
             keyword: 検索キーワード
@@ -210,18 +213,16 @@ class MachbaitoScraper(BaseScraper):
         prefecture_code = self._get_prefecture_code(area)
         job_category_id = self._get_job_category_id(keyword)
 
-        # 基本URL
+        # 基本URL（都道府県）
         base_url = f"https://machbaito.jp/prefectures{prefecture_code}"
 
-        # クエリパラメータ
-        params = []
-
+        # 職種カテゴリがあればパスに追加
         if job_category_id:
-            params.append(f"q[ji][]={job_category_id}")
+            base_url = f"{base_url}/jobtag_{job_category_id}"
             logger.info(f"[マッハバイト] 職種カテゴリID: {job_category_id} (キーワード: {keyword})")
 
-        # 新着順
-        params.append("q[sk]=1")
+        # クエリパラメータ
+        params = ["q[sk]=1"]  # 新着順
 
         # ページ番号（2ページ目以降）
         if page > 1:
