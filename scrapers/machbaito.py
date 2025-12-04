@@ -414,13 +414,44 @@ class MachbaitoScraper(BaseScraper):
                     if "location" not in data:
                         data["location"] = line
 
+            # 雇用形態パターン（タイトルから除外）
+            employment_types = [
+                "アルバイト", "パート", "正社員", "契約社員", "派遣社員",
+                "派遣", "業務委託", "短期", "長期", "単発", "日払い",
+                "週払い", "フリーター", "学生歓迎", "主婦歓迎", "未経験OK",
+                "未経験歓迎", "経験者歓迎", "経験者優遇", "高校生OK",
+                "シニア歓迎", "Wワーク", "副業OK", "扶養内OK",
+            ]
+
+            # 雇用形態を抽出
+            for line in lines:
+                for emp_type in employment_types:
+                    if emp_type in line and len(line) <= 20:
+                        data["employment_type"] = line
+                        break
+                if "employment_type" in data:
+                    break
+
             # タイトル（最初の意味のある行）
             skip_patterns = ["NEW", "急募", "PR", "おすすめ", "人気"]
             for line in lines:
-                if line not in skip_patterns and len(line) >= 3:
-                    if not re.search(r'(時給|日給|月給|駅|線)', line):
-                        data["title"] = line
+                if line in skip_patterns:
+                    continue
+                if len(line) < 3:
+                    continue
+                # 給与・駅名・雇用形態はスキップ
+                if re.search(r'(時給|日給|月給|駅|線)', line):
+                    continue
+                # 雇用形態のみの行はスキップ
+                is_employment_only = False
+                for emp_type in employment_types:
+                    if line == emp_type or (emp_type in line and len(line) <= 15):
+                        is_employment_only = True
                         break
+                if is_employment_only:
+                    continue
+                data["title"] = line
+                break
 
             # 会社名を探す
             company_patterns = ["株式会社", "有限会社", "合同会社", "社団法人", "財団法人"]
