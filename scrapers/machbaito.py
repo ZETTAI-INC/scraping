@@ -576,14 +576,76 @@ class MachbaitoScraper(BaseScraper):
                 break
 
             # 会社名を探す
-            company_patterns = ["株式会社", "有限会社", "合同会社", "社団法人", "財団法人"]
-            for line in lines:
-                for pattern in company_patterns:
-                    if pattern in line:
-                        data["company_name"] = line
+            # 1. CSSセレクタで試す
+            company_selectors = [
+                ".p-works-work-body-name",
+                "[class*='company']",
+                "[class*='name']",
+                "h3",
+                "h2",
+            ]
+            for selector in company_selectors:
+                try:
+                    company_elem = await card.query_selector(selector)
+                    if company_elem:
+                        company_text = await company_elem.inner_text()
+                        if company_text:
+                            company_text = company_text.strip()
+                            # 給与や雇用形態でないことを確認
+                            if not re.search(r'(時給|日給|月給|アルバイト|パート|正社員|派遣)', company_text):
+                                if len(company_text) >= 3:
+                                    data["company_name"] = company_text
+                                    break
+                except:
+                    continue
+
+            # 2. 親要素からも試す
+            if "company_name" not in data:
+                try:
+                    parent_elem = await card.evaluate_handle("el => el.parentElement")
+                    if parent_elem:
+                        parent = parent_elem.as_element()
+                        if parent:
+                            for selector in company_selectors:
+                                try:
+                                    company_elem = await parent.query_selector(selector)
+                                    if company_elem:
+                                        company_text = await company_elem.inner_text()
+                                        if company_text:
+                                            company_text = company_text.strip()
+                                            if not re.search(r'(時給|日給|月給|アルバイト|パート|正社員|派遣)', company_text):
+                                                if len(company_text) >= 3:
+                                                    data["company_name"] = company_text
+                                                    break
+                                except:
+                                    continue
+                except:
+                    pass
+
+            # 3. テキストから会社名パターンを探す
+            if "company_name" not in data:
+                # 法人格パターン
+                company_patterns = ["株式会社", "有限会社", "合同会社", "社団法人", "財団法人"]
+                for line in lines:
+                    for pattern in company_patterns:
+                        if pattern in line:
+                            data["company_name"] = line
+                            break
+                    if "company_name" in data:
                         break
-                if "company_name" in data:
-                    break
+
+            # 4. 店舗名パターン（「○○店」「○○支店」など）
+            if "company_name" not in data:
+                store_patterns = [r'.+店[（\(]', r'.+店/', r'.+支店', r'.+営業所', r'.+事業所']
+                for line in lines:
+                    for pattern in store_patterns:
+                        if re.search(pattern, line):
+                            # 給与や条件でないことを確認
+                            if not re.search(r'(時給|日給|月給|円|駅|線|分)', line):
+                                data["company_name"] = line
+                                break
+                    if "company_name" in data:
+                        break
 
             return data if data.get("page_url") else None
 
