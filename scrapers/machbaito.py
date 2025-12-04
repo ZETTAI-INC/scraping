@@ -432,13 +432,52 @@ class MachbaitoScraper(BaseScraper):
         try:
             data = {"site": "マッハバイト"}
 
-            # 雇用形態を抽出（CSSセレクタで直接取得）
+            # 雇用形態を抽出（複数のセレクタを試す）
             # <li class="p-works-work-header-tag misc">アルバイト・パート</li>
-            emp_type_elem = await card.query_selector("li.p-works-work-header-tag, .p-works-work-header-tag")
-            if emp_type_elem:
-                emp_type_text = await emp_type_elem.inner_text()
-                if emp_type_text:
-                    data["employment_type"] = emp_type_text.strip()
+            employment_selectors = [
+                "li.p-works-work-header-tag",
+                ".p-works-work-header-tag",
+                "li[class*='header-tag']",
+                "[class*='header-tag']",
+                "[class*='employment']",
+                "[class*='job-type']",
+                "li.tag",
+                ".tag:first-child",
+            ]
+            emp_keywords = ["アルバイト", "パート", "正社員", "派遣", "契約", "業務委託", "登録制"]
+
+            for selector in employment_selectors:
+                try:
+                    emp_type_elem = await card.query_selector(selector)
+                    if emp_type_elem:
+                        emp_type_text = await emp_type_elem.inner_text()
+                        if emp_type_text:
+                            emp_text = emp_type_text.strip()
+                            # 雇用形態のキーワードが含まれているか確認
+                            for kw in emp_keywords:
+                                if kw in emp_text:
+                                    data["employment_type"] = emp_text
+                                    logger.debug(f"[マッハバイト] 雇用形態検出: {emp_text} (セレクタ: {selector})")
+                                    break
+                            if "employment_type" in data:
+                                break
+                except Exception as e:
+                    logger.debug(f"[マッハバイト] セレクタ {selector} エラー: {e}")
+                    continue
+
+            # カード内テキストからも雇用形態を探す（フォールバック）
+            if "employment_type" not in data:
+                card_text = await card.inner_text()
+                first_lines = card_text.split('\n')[:3]
+                for line in first_lines:
+                    line = line.strip()
+                    for kw in emp_keywords:
+                        if kw in line and len(line) <= 20:
+                            data["employment_type"] = line
+                            logger.debug(f"[マッハバイト] 雇用形態(テキスト): {line}")
+                            break
+                    if "employment_type" in data:
+                        break
 
             # リンクを取得
             href = await card.get_attribute("href")
@@ -474,41 +513,17 @@ class MachbaitoScraper(BaseScraper):
                     if "location" not in data:
                         data["location"] = line
 
-            # 雇用形態パターン（実際の雇用形態のみ）
-            employment_type_patterns = [
-                "派遣労働者",
-                "アルバイト・パート",
-                "アルバイト",
-                "パート",
-                "正社員",
-                "契約社員",
-                "派遣社員",
-                "派遣",
-                "業務委託",
-                "登録制",
-            ]
-
-            # 条件マーカー（タイトルから除外するが、雇用形態ではない）
-            condition_markers = [
+            # タイトル除外用のパターン
+            title_skip_patterns = [
+                # 雇用形態
+                "派遣労働者", "アルバイト・パート", "アルバイト", "パート",
+                "正社員", "契約社員", "派遣社員", "派遣", "業務委託", "登録制",
+                # 条件マーカー
                 "短期", "長期", "単発", "日払い", "週払い",
                 "フリーター", "学生歓迎", "主婦歓迎", "未経験OK",
                 "未経験歓迎", "経験者歓迎", "経験者優遇", "高校生OK",
                 "シニア歓迎", "Wワーク", "副業OK", "扶養内OK", "新着",
             ]
-
-            # 雇用形態を抽出（CSSセレクタで取得できなかった場合のフォールバック）
-            if "employment_type" not in data:
-                for line in lines[:5]:  # 最初の5行のみチェック
-                    for emp_type in employment_type_patterns:
-                        if emp_type in line:
-                            # 雇用形態のみを抽出（行全体ではなく）
-                            data["employment_type"] = emp_type
-                            break
-                    if "employment_type" in data:
-                        break
-
-            # タイトル除外用のパターン（雇用形態+条件マーカー）
-            title_skip_patterns = employment_type_patterns + condition_markers
 
             # タイトル（最初の意味のある行）
             skip_patterns = ["NEW", "急募", "PR", "おすすめ", "人気"]
