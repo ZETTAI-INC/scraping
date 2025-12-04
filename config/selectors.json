@@ -656,8 +656,8 @@
   "machbaito": {
     "name": "マッハバイト",
     "base_url": "https://machbaito.jp",
-    "search_url_pattern": "https://machbaito.jp/prefectures{prefecture_code}/jobtag_{job_category_id}?q[sk]=1&page={page}",
-    "note": "都道府県はJISコード(1-47)、職種IDはパス形式/jobtag_{id}で指定、q[sk]=1で新着順",
+    "search_url_pattern": "https://machbaito.jp/works?q[ji][]={job_category_ids}&q[pi][]={prefecture_code}&q[sk]=1&page={page}",
+    "note": "都道府県はJISコード(1-47)、職種IDは複数指定可能（q[ji][]=ID形式）、q[sk]=1で新着順",
     "sort": {
       "param": "q[sk]",
       "newest": "1"
