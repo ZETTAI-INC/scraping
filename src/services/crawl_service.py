@@ -1974,13 +1974,38 @@ async def crawl_machbaito(
                         raw_count = search_result.get('raw_count', len(jobs))
                         total_raw_count += raw_count
 
-                        # 重複チェック
+                        # 重複チェックと詳細ページアクセス
                         for job in jobs:
                             job_id = job.get('job_id')
                             if job_id and job_id in seen_job_ids:
                                 continue
                             if job_id:
                                 seen_job_ids.add(job_id)
+
+                            # 詳細ページから住所等を取得
+                            job_url = job.get('page_url')
+                            if job_url:
+                                try:
+                                    detail_data = await scraper.extract_detail_info(page, job_url)
+                                    if detail_data:
+                                        # 詳細情報をマージ（詳細ページの情報を優先）
+                                        if detail_data.get('location'):
+                                            job['location'] = detail_data['location']
+                                        if detail_data.get('nearest_station'):
+                                            job['nearest_station'] = detail_data['nearest_station']
+                                        if detail_data.get('salary') and not job.get('salary'):
+                                            job['salary'] = detail_data['salary']
+                                        if detail_data.get('working_hours'):
+                                            job['working_hours'] = detail_data['working_hours']
+                                        if detail_data.get('job_description'):
+                                            job['job_description'] = detail_data['job_description']
+                                        if detail_data.get('qualifications'):
+                                            job['qualifications'] = detail_data['qualifications']
+                                        if detail_data.get('phone'):
+                                            job['phone'] = detail_data['phone']
+                                except Exception as e:
+                                    logger.debug(f"[マッハバイト] 詳細取得エラー: {e}")
+
                             all_jobs.append(job)
 
                         logger.info(f"[マッハバイト] {area} × {keyword}: {len(jobs)}件取得")
