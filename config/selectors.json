@@ -653,17 +653,66 @@
       "start": 1
     }
   },
-  "mahhabaito": {
+  "machbaito": {
     "name": "マッハバイト",
-    "base_url": "https://j-sen.jp",
-    "search_url_pattern": "https://j-sen.jp/search/?keyword={keyword}&area={area}&page={page}",
+    "base_url": "https://machbaito.jp",
+    "search_url_pattern": "https://machbaito.jp/prefectures{prefecture_code}?q[ji][]={job_category_id}&q[sk]=1&page={page}",
+    "note": "都道府県はJISコード(1-47)、職種IDは独自コード、q[sk]=1で新着順",
+    "sort": {
+      "param": "q[sk]",
+      "newest": "1"
+    },
     "selectors": {
-      "job_cards": ".job-list-item",
-      "title": ".job-list-item__title",
-      "company": ".job-list-item__company",
-      "location": ".job-list-item__location",
-      "salary": ".job-list-item__salary",
-      "detail_link": "a.job-list-item__link"
+      "job_cards": "a[href*='/detail/']",
+      "title": ".job-title, h3, h2",
+      "company": ".company-name, .employer",
+      "location": ".location, .area",
+      "salary": ".salary, .wage",
+      "detail_link": "a[href*='/detail/']"
+    },
+    "detail_selectors": {
+      "company_name": ".company-info .name",
+      "phone": ".contact-info .phone",
+      "job_description": ".job-description",
+      "working_hours": ".working-hours"
+    },
+    "job_categories": {
+      "営業": 1,
+      "販売": 2,
+      "接客": 2,
+      "飲食": 3,
+      "ホール": 3,
+      "キッチン": 3,
+      "軽作業": 4,
+      "倉庫": 4,
+      "工場": 4,
+      "配送": 5,
+      "ドライバー": 5,
+      "事務": 6,
+      "データ入力": 6,
+      "コールセンター": 6,
+      "IT": 7,
+      "エンジニア": 7,
+      "SE": 7,
+      "介護": 8,
+      "看護": 8,
+      "医療": 8,
+      "教育": 9,
+      "塾講師": 9,
+      "警備": 10,
+      "清掃": 10,
+      "美容": 11,
+      "イベント": 12
+    },
+    "prefecture_codes": {
+      "北海道": 1, "青森": 2, "岩手": 3, "宮城": 4, "秋田": 5, "山形": 6, "福島": 7,
+      "茨城": 8, "栃木": 9, "群馬": 10, "埼玉": 11, "千葉": 12, "東京": 13, "神奈川": 14,
+      "新潟": 15, "富山": 16, "石川": 17, "福井": 18, "山梨": 19, "長野": 20,
+      "岐阜": 21, "静岡": 22, "愛知": 23, "三重": 24,
+      "滋賀": 25, "京都": 26, "大阪": 27, "兵庫": 28, "奈良": 29, "和歌山": 30,
+      "鳥取": 31, "島根": 32, "岡山": 33, "広島": 34, "山口": 35,
+      "徳島": 36, "香川": 37, "愛媛": 38, "高知": 39,
+      "福岡": 40, "佐賀": 41, "長崎": 42, "熊本": 43, "大分": 44, "宮崎": 45, "鹿児島": 46, "沖縄": 47
     },
     "pagination": {
       "type": "page_number",
