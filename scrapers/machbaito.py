@@ -897,36 +897,117 @@ class MachbaitoScraper(BaseScraper):
         """詳細ページから追加情報を取得"""
         detail_data = {}
 
+        # 都道府県パターン（住所の先頭を判別）
+        prefecture_pattern = re.compile(
+            r'^(北海道|青森県?|岩手県?|宮城県?|秋田県?|山形県?|福島県?|'
+            r'茨城県?|栃木県?|群馬県?|埼玉県?|千葉県?|東京都?|神奈川県?|'
+            r'新潟県?|富山県?|石川県?|福井県?|山梨県?|長野県?|'
+            r'岐阜県?|静岡県?|愛知県?|三重県?|'
+            r'滋賀県?|京都府?|大阪府?|兵庫県?|奈良県?|和歌山県?|'
+            r'鳥取県?|島根県?|岡山県?|広島県?|山口県?|'
+            r'徳島県?|香川県?|愛媛県?|高知県?|'
+            r'福岡県?|佐賀県?|長崎県?|熊本県?|大分県?|宮崎県?|鹿児島県?|沖縄県?)'
+        )
+
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(2000)
 
-            body_text = await page.inner_text("body")
+            # dl.p-detail-table から情報を取得
+            # 構造: dl > dt.p-detail-table-title + dd.p-detail-table-content
+            # 「勤務地・面接地」は複数回出現するため、最初のものを優先
+            dls = await page.query_selector_all("dl.p-detail-table")
+            location_found = False
 
-            # 給与
-            salary_match = re.search(r"(時給|日給|月給)[：:\s]*([0-9,]+円[^\n]*)", body_text)
-            if salary_match:
-                detail_data["salary"] = salary_match.group(0).strip()
+            for dl in dls:
+                try:
+                    dt = await dl.query_selector("dt.p-detail-table-title")
+                    dd = await dl.query_selector("dd.p-detail-table-content")
+                    if not dt or not dd:
+                        continue
 
-            # 勤務地
-            location_match = re.search(r"勤務地[：:\s]*([^\n]+)", body_text)
-            if location_match:
-                detail_data["location"] = location_match.group(1).strip()
+                    dt_text = (await dt.inner_text()).strip()
+                    dd_text = (await dd.inner_text()).strip()
 
-            # 勤務時間
-            time_match = re.search(r"勤務時間[：:\s]*([^\n]+)", body_text)
-            if time_match:
-                detail_data["working_hours"] = time_match.group(1).strip()
+                    # 勤務地・面接地（住所と最寄駅を含む）
+                    # 複数回出現するため、最初のもの（住所+駅のセット）を使用
+                    if "勤務地" in dt_text and "面接地" in dt_text and not location_found:
+                        lines = [l.strip() for l in dd_text.split('\n') if l.strip()]
 
-            # 仕事内容
-            desc_match = re.search(r"仕事内容[：:\s]*([^\n]+)", body_text)
-            if desc_match:
-                detail_data["job_description"] = desc_match.group(1).strip()[:500]
+                        # 住所を探す（都道府県で始まる行）
+                        for line in lines:
+                            if prefecture_pattern.match(line):
+                                detail_data["location"] = line
+                                location_found = True
+                                break
 
-            # 電話番号
-            phone_match = re.search(r"(\d{2,4}-\d{2,4}-\d{3,4})", body_text)
-            if phone_match:
-                detail_data["phone"] = phone_match.group(1)
+                        # 最寄駅を探す（駅名を含む行）
+                        stations = []
+                        for line in lines:
+                            if ('駅' in line or '線' in line) and not prefecture_pattern.match(line):
+                                stations.append(line)
+                        if stations:
+                            detail_data["nearest_station"] = ", ".join(stations)
+
+                        # 住所が見つかったら、この勤務地セクションの処理を終了
+                        if location_found:
+                            continue
+
+                    # 給与
+                    elif "給与" in dt_text:
+                        detail_data["salary"] = dd_text
+
+                    # 勤務時間
+                    elif "勤務時間" in dt_text:
+                        detail_data["working_hours"] = dd_text
+
+                    # 時間
+                    elif dt_text == "時間":
+                        if "working_hours" not in detail_data:
+                            detail_data["working_hours"] = dd_text
+
+                    # 応募資格
+                    elif "応募資格" in dt_text:
+                        detail_data["qualifications"] = dd_text
+
+                    # 待遇
+                    elif "待遇" in dt_text:
+                        detail_data["benefits"] = dd_text
+
+                    # 仕事内容
+                    elif "仕事内容" in dt_text:
+                        detail_data["job_description"] = dd_text[:500]
+
+                    # 応募情報（会社名・連絡先が含まれる場合）
+                    elif "応募情報" in dt_text:
+                        # 電話番号を抽出
+                        phone_match = re.search(r"(\d{2,4}-\d{2,4}-\d{3,4})", dd_text)
+                        if phone_match:
+                            detail_data["phone"] = phone_match.group(1)
+
+                except Exception as e:
+                    logger.debug(f"[マッハバイト] dl要素処理エラー: {e}")
+                    continue
+
+            # フォールバック: dlから取得できなかった場合はbodyテキストから
+            if not detail_data.get("location"):
+                body_text = await page.inner_text("body")
+                # 「勤務地・面接地」セクションの次の行で都道府県で始まるものを取得
+                lines = body_text.split('\n')
+                for i, line in enumerate(lines):
+                    if '勤務地' in line and '面接地' in line:
+                        # 後続の行から住所を探す
+                        for j in range(i + 1, min(i + 5, len(lines))):
+                            if prefecture_pattern.match(lines[j].strip()):
+                                detail_data["location"] = lines[j].strip()
+                                break
+                        break
+
+            if not detail_data.get("phone"):
+                body_text = await page.inner_text("body") if "body_text" not in dir() else body_text
+                phone_match = re.search(r"(\d{2,4}-\d{2,4}-\d{3,4})", body_text)
+                if phone_match:
+                    detail_data["phone"] = phone_match.group(1)
 
         except Exception as e:
             logger.error(f"[マッハバイト] 詳細取得エラー: {e}")
