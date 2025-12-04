@@ -432,7 +432,12 @@ class MachbaitoScraper(BaseScraper):
         try:
             data = {"site": "マッハバイト"}
 
-            # 雇用形態キーワード
+            # 雇用形態キーワード（完全一致用）
+            emp_full_patterns = [
+                "派遣労働者", "アルバイト・パート", "正社員", "契約社員",
+                "派遣社員", "業務委託", "登録制", "アルバイト", "パート"
+            ]
+            # 部分一致用キーワード
             emp_keywords = ["アルバイト", "パート", "正社員", "派遣", "契約", "業務委託", "登録制"]
 
             # 親要素を取得して雇用形態を探す
@@ -476,6 +481,10 @@ class MachbaitoScraper(BaseScraper):
                     "[class*='header-tag']",
                     "[class*='employment']",
                     "[class*='job-type']",
+                    "[class*='misc']",
+                    "[class*='badge']",
+                    "[class*='tag']",
+                    ".p-works-work-header li",
                 ]
                 for selector in employment_selectors:
                     try:
@@ -497,16 +506,28 @@ class MachbaitoScraper(BaseScraper):
             # カード内テキストからも雇用形態を探す（フォールバック）
             if "employment_type" not in data:
                 card_text = await card.inner_text()
-                first_lines = card_text.split('\n')[:5]
+                first_lines = card_text.split('\n')[:10]
                 for line in first_lines:
                     line = line.strip()
-                    for kw in emp_keywords:
-                        if kw in line and len(line) <= 25:
+                    if not line:
+                        continue
+                    # 完全一致パターンを優先
+                    for pattern in emp_full_patterns:
+                        if pattern == line or line == pattern:
                             data["employment_type"] = line
-                            logger.debug(f"[マッハバイト] 雇用形態(テキスト): {line}")
+                            logger.debug(f"[マッハバイト] 雇用形態(完全一致): {line}")
                             break
                     if "employment_type" in data:
                         break
+                    # 部分一致（短い行のみ）
+                    if len(line) <= 30:
+                        for kw in emp_keywords:
+                            if kw in line:
+                                data["employment_type"] = line
+                                logger.debug(f"[マッハバイト] 雇用形態(部分一致): {line}")
+                                break
+                        if "employment_type" in data:
+                            break
 
             # リンクを取得
             href = await card.get_attribute("href")
