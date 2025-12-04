@@ -56,9 +56,12 @@ class LineBaitoScraper(BaseScraper):
         "雑貨": 14,
         "アパレル": 15,
         "家電量販店": 17,
+        "家電": 17,
         "商品管理": 18,
         "携帯販売": 19,
+        "携帯": 19,
         "ドラッグストア": 21,
+        "薬局": 21,
         "スーパー": 22,
         "コンビニ": 22,
         "レジ": 22,
@@ -207,9 +210,49 @@ class LineBaitoScraper(BaseScraper):
         # ビューティー (98-100)
         "美容師": 98,
         "理容師": 98,
-        "美容": 98,
         "エステ": 100,
         "マッサージ": 100,
+    }
+
+    # 大カテゴリ → 小カテゴリIDリストのマッピング
+    # 「販売」「飲食」などの大カテゴリを指定した場合、複数のIDで検索
+    JOB_CATEGORY_GROUPS = {
+        # 飲食・フード (1-11)
+        "飲食": [1, 2, 3, 4, 6, 7, 9, 10, 11],
+        "フード": [1, 2, 3, 4, 6, 7, 9, 10, 11],
+        # 販売 (12-25) - 件数があるIDのみ
+        "販売": [12, 14, 15, 17, 18, 19, 21, 22, 23, 25],
+        # 接客・サービス (26-33)
+        "接客": [26, 28, 29, 30, 33],
+        "サービス": [26, 28, 29, 30, 33],
+        # 医療・介護 (34-40)
+        "医療": [34, 36, 37, 39, 40],
+        # レジャー・エンタメ (41-46)
+        "レジャー": [41, 42, 44, 45],
+        "エンタメ": [41, 42, 44, 45],
+        # 引越し・配達 (47-51)
+        "配送": [47, 48, 49, 50],
+        "物流": [47, 48, 49, 50],
+        # クリエイティブ (53-64)
+        "クリエイティブ": [53, 54, 57, 59, 61, 62, 63],
+        "IT": [54, 57],
+        # オフィスワーク (65-70)
+        "オフィス": [65, 67, 68, 69, 70],
+        "事務": [67, 68, 69, 70],
+        # 営業 (71-73)
+        "営業": [71, 73],
+        # 教育 (77-82)
+        "教育": [77, 78, 79, 80, 82],
+        # 軽作業 (83-88)
+        "軽作業": [83, 84, 85, 86],
+        "工場": [83, 84, 85],
+        "警備": [86],
+        # 建築 (90-92)
+        "建築": [90, 91],
+        # イベント・キャンペーン (94-97)
+        "イベント": [94, 95, 96],
+        # ビューティー (98-100)
+        "美容": [98, 100],
     }
 
     def __init__(self):
@@ -278,39 +321,49 @@ class LineBaitoScraper(BaseScraper):
             logger.debug(f"[LINEバイト] 0件チェックエラー（続行）: {e}")
             return False
 
-    def _get_job_category_id(self, keyword: str) -> Optional[int]:
-        """キーワードから業種カテゴリIDを取得
+    def _get_job_category_ids(self, keyword: str) -> Optional[List[int]]:
+        """キーワードから業種カテゴリIDリストを取得
 
-        完全一致または部分一致でカテゴリIDを検索
+        大カテゴリ（販売、飲食等）の場合は複数IDを返す
+        小カテゴリの場合は単一IDのリストを返す
         見つからない場合はNoneを返す（キーワード検索にフォールバック）
         """
         if not keyword:
             return None
 
-        # 完全一致を優先
-        if keyword in self.JOB_CATEGORY_IDS:
-            return self.JOB_CATEGORY_IDS[keyword]
+        # 1. 大カテゴリの完全一致を優先
+        if keyword in self.JOB_CATEGORY_GROUPS:
+            return self.JOB_CATEGORY_GROUPS[keyword]
 
-        # 部分一致（キーワードがカテゴリ名に含まれる場合）
+        # 2. 小カテゴリの完全一致
+        if keyword in self.JOB_CATEGORY_IDS:
+            return [self.JOB_CATEGORY_IDS[keyword]]
+
+        # 3. 大カテゴリの部分一致
+        for category_name, category_ids in self.JOB_CATEGORY_GROUPS.items():
+            if keyword in category_name or category_name in keyword:
+                return category_ids
+
+        # 4. 小カテゴリの部分一致
         for category_name, category_id in self.JOB_CATEGORY_IDS.items():
             if keyword in category_name or category_name in keyword:
-                return category_id
+                return [category_id]
 
         return None
 
-    def generate_search_url(self, keyword: str, area: str, page: int = 1, job_category_id: Optional[int] = None) -> str:
+    def generate_search_url(self, keyword: str, area: str, page: int = 1, job_category_ids: Optional[List[int]] = None) -> str:
         """
         LINEバイト用の検索URL生成
 
         URL形式:
-        - 業種指定あり: https://baito.line.me/jobs?jobCategoryIds={category_id}&prefectureId={id}&sort=new_arrival&page={page}
+        - 業種指定あり: https://baito.line.me/jobs?jobCategoryIds={id1}&jobCategoryIds={id2}&prefectureId={id}&sort=new_arrival&page={page}
         - 業種指定なし: https://baito.line.me/jobs?prefectureId={id}&keyword={keyword}&sort=new_arrival&page={page}
 
         Args:
             keyword: 検索キーワード
             area: 都道府県名
             page: ページ番号
-            job_category_id: 業種カテゴリID（指定がなければキーワードから自動検出）
+            job_category_ids: 業種カテゴリIDリスト（指定がなければキーワードから自動検出）
         """
         from urllib.parse import quote
 
@@ -323,17 +376,18 @@ class LineBaitoScraper(BaseScraper):
         # 業種カテゴリIDを決定
         # 1. 明示的に指定されている場合はそれを使用
         # 2. 指定がなければキーワードから自動検出
-        category_id = job_category_id
+        category_ids = job_category_ids
         use_keyword_search = True
 
-        if category_id is None and keyword:
-            category_id = self._get_job_category_id(keyword)
+        if category_ids is None and keyword:
+            category_ids = self._get_job_category_ids(keyword)
 
-        if category_id is not None:
-            # 業種IDでフィルタリング
-            params.append(f"jobCategoryIds={category_id}")
+        if category_ids is not None and len(category_ids) > 0:
+            # 業種IDでフィルタリング（複数ID対応）
+            for cat_id in category_ids:
+                params.append(f"jobCategoryIds={cat_id}")
             use_keyword_search = False
-            logger.info(f"[LINEバイト] 業種カテゴリID: {category_id} (キーワード: {keyword})")
+            logger.info(f"[LINEバイト] 業種カテゴリID: {category_ids} (キーワード: {keyword})")
 
         # 都道府県
         params.append(f"prefectureId={prefecture_id}")
