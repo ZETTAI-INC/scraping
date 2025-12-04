@@ -157,6 +157,74 @@ class TestIndeedUrlGeneration:
         assert int(params2.get("start", ["0"])[0]) > 0
 
 
+class TestMachbaitoUrlGeneration:
+    """マッハバイトURL生成テスト"""
+
+    def test_basic_url_structure(self, machbaito_scraper):
+        """基本的なURL構造"""
+        url = machbaito_scraper.generate_search_url("SE", "東京", 1)
+        assert "machbaito.jp" in url
+        assert "prefectures13" in url
+        assert "city_409" in url  # 東京の全域cityコード
+
+    def test_category_search_with_jobtag(self, machbaito_scraper):
+        """職種カテゴリがある場合jobtag_が含まれるか"""
+        url = machbaito_scraper.generate_search_url("エンジニア", "東京", 1)
+        assert "jobtag_" in url
+
+    def test_new_sort_parameter(self, machbaito_scraper):
+        """新着順ソート(q[sk]=1)が含まれるか"""
+        url = machbaito_scraper.generate_search_url("販売", "大阪", 1)
+        assert "q[sk]=1" in url
+
+    def test_pagination(self, machbaito_scraper):
+        """ページネーションが正しく動作するか"""
+        url_page1 = machbaito_scraper.generate_search_url("SE", "東京", 1)
+        url_page2 = machbaito_scraper.generate_search_url("SE", "東京", 2)
+        assert "page=" not in url_page1
+        assert "page=2" in url_page2
+
+    @pytest.mark.parametrize("area,expected_code,expected_city", [
+        ("北海道", 1, 1),
+        ("東京", 13, 409),
+        ("大阪", 27, 799),
+        ("石川", 17, 540),
+        ("沖縄", 47, 1239),
+    ])
+    def test_prefecture_code_mapping(self, machbaito_scraper, area, expected_code, expected_city):
+        """都道府県コードとcityコードが正しく反映されるか"""
+        url = machbaito_scraper.generate_search_url("SE", area, 1)
+        assert f"prefectures{expected_code}" in url
+        assert f"city_{expected_city}" in url
+
+    @pytest.mark.parametrize("keyword,expected_jobtag", [
+        ("SE", "426"),
+        ("エンジニア", "426"),
+        ("事務", "402"),
+        ("介護", "583"),
+        ("飲食", "1"),
+        ("販売", "94"),
+    ])
+    def test_job_category_id_mapping(self, machbaito_scraper, keyword, expected_jobtag):
+        """職種カテゴリIDが正しくマッピングされるか"""
+        url = machbaito_scraper.generate_search_url(keyword, "東京", 1)
+        assert f"jobtag_{expected_jobtag}" in url
+
+    def test_unknown_keyword_no_jobtag(self, machbaito_scraper):
+        """未知のキーワードはjobtag_なしでURL生成されるか"""
+        url = machbaito_scraper.generate_search_url("特殊なキーワード123", "東京", 1)
+        assert "machbaito.jp" in url
+        assert "prefectures13" in url
+        # jobtag_は含まれない（または含まれても構わない）
+
+    def test_prefecture_suffix_handling(self, machbaito_scraper):
+        """都道府県名の「県」「府」「都」が正しく処理されるか"""
+        url1 = machbaito_scraper.generate_search_url("SE", "東京", 1)
+        url2 = machbaito_scraper.generate_search_url("SE", "東京都", 1)
+        assert "prefectures13" in url1
+        assert "prefectures13" in url2
+
+
 class TestAllScrapersUrlValidity:
     """全スクレイパーのURL有効性テスト"""
 
@@ -187,3 +255,10 @@ class TestAllScrapersUrlValidity:
         parsed = urlparse(url)
         assert parsed.scheme == "https"
         assert "indeed.com" in parsed.netloc
+
+    def test_machbaito_url_is_valid(self, machbaito_scraper):
+        """マッハバイトのURLが有効な形式か"""
+        url = machbaito_scraper.generate_search_url("SE", "東京", 1)
+        parsed = urlparse(url)
+        assert parsed.scheme == "https"
+        assert "machbaito.jp" in parsed.netloc

@@ -44,6 +44,13 @@ def hellowork_scraper():
     return HelloWorkScraper()
 
 
+@pytest.fixture
+def machbaito_scraper():
+    """マッハバイトスクレイパーのインスタンス"""
+    from scrapers.machbaito import MachbaitoScraper
+    return MachbaitoScraper()
+
+
 # 全47都道府県リスト
 ALL_PREFECTURES = [
     "北海道",

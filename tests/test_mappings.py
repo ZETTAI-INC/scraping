@@ -124,6 +124,72 @@ class TestBaitoruMappings:
                     assert field in config, f"{area}に'{field}'フィールドがない"
 
 
+class TestMachbaitoMappings:
+    """マッハバイトのマッピングテスト"""
+
+    def test_all_prefectures_have_code(self, machbaito_scraper, all_prefectures):
+        """全47都道府県にコードマッピングがあるか"""
+        missing = []
+        for pref in all_prefectures:
+            if pref not in machbaito_scraper.PREFECTURE_CODES:
+                missing.append(pref)
+        assert len(missing) == 0, f"コードマッピングがない都道府県: {missing}"
+
+    def test_prefecture_codes_are_valid(self, machbaito_scraper):
+        """都道府県コードが1-47の範囲内か（JIS準拠）"""
+        for pref, code in machbaito_scraper.PREFECTURE_CODES.items():
+            assert 1 <= code <= 47, f"{pref}のコード {code} が範囲外"
+
+    def test_prefecture_codes_are_unique(self, machbaito_scraper):
+        """都道府県コードが重複していないか"""
+        codes = list(machbaito_scraper.PREFECTURE_CODES.values())
+        assert len(codes) == len(set(codes)), "都道府県コードに重複がある"
+
+    def test_all_prefectures_have_city_code(self, machbaito_scraper):
+        """全都道府県に対応するcityコードがあるか"""
+        for pref, pref_code in machbaito_scraper.PREFECTURE_CODES.items():
+            assert pref_code in machbaito_scraper.PREFECTURE_ALL_CITY_CODES, \
+                f"{pref}(code={pref_code})に対応するcityコードがない"
+
+    def test_city_codes_are_positive(self, machbaito_scraper):
+        """cityコードが正の整数か"""
+        for pref_code, city_code in machbaito_scraper.PREFECTURE_ALL_CITY_CODES.items():
+            assert isinstance(city_code, int), f"pref_code={pref_code}のcityコードが整数ではない"
+            assert city_code > 0, f"pref_code={pref_code}のcityコード {city_code} が正の整数ではない"
+
+    def test_job_category_ids_are_lists(self, machbaito_scraper):
+        """職種カテゴリIDがリスト形式か"""
+        for keyword, ids in machbaito_scraper.JOB_CATEGORY_IDS.items():
+            assert isinstance(ids, list), f"{keyword}のIDがリストではない"
+            assert len(ids) > 0, f"{keyword}のIDリストが空"
+
+    def test_job_category_ids_are_positive(self, machbaito_scraper):
+        """職種カテゴリIDが正の整数か"""
+        for keyword, ids in machbaito_scraper.JOB_CATEGORY_IDS.items():
+            for id_val in ids:
+                assert isinstance(id_val, int), f"{keyword}のID {id_val} が整数ではない"
+                assert id_val > 0, f"{keyword}のID {id_val} が正の整数ではない"
+
+    @pytest.mark.parametrize("keyword", [
+        "SE", "事務", "営業", "介護", "飲食", "販売", "IT", "エンジニア", "ドライバー"
+    ])
+    def test_common_keywords_mapped(self, machbaito_scraper, keyword):
+        """主要なキーワードがマッピングされているか"""
+        found = keyword in machbaito_scraper.JOB_CATEGORY_IDS or \
+                any(keyword in k for k in machbaito_scraper.JOB_CATEGORY_IDS.keys())
+        assert found, f"'{keyword}'がマッピングされていない"
+
+    @pytest.mark.parametrize("pref,expected_code", [
+        ("北海道", 1),
+        ("東京", 13),
+        ("大阪", 27),
+        ("沖縄", 47),
+    ])
+    def test_jis_prefecture_codes(self, machbaito_scraper, pref, expected_code):
+        """JIS都道府県コードが正しいか"""
+        assert machbaito_scraper.PREFECTURE_CODES[pref] == expected_code
+
+
 class TestCrossScraperConsistency:
     """スクレイパー間の一貫性テスト"""
 
