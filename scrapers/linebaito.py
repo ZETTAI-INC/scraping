@@ -613,18 +613,28 @@ class LineBaitoScraper(BaseScraper):
                     data["job_id"] = match.group(1)
 
             # 雇用形態を取得（Badge__StyledRoot クラスを持つ要素から）
-            # <div class="Badge__StyledRoot-sc-2lgk8d-0 ...">アルバイト</div>
-            EMPLOYMENT_TYPES = {"アルバイト", "パート", "正社員", "契約社員", "派遣社員", "業務委託", "インターン"}
+            # <div class="Badge__StyledRoot-sc-2lgk8d-0 ...">ア</div>
+            # LINEバイトでは「ア」「派」「契」「正」などの1文字略称が使われる
+            EMPLOYMENT_TYPE_MAP = {
+                # 1文字略称
+                "ア": "アルバイト",
+                "パ": "パート",
+                "正": "正社員",
+                "契": "契約社員",
+                "派": "派遣社員",
+                "委": "業務委託",
+                "イ": "インターン",
+                # フルネーム
+                "アルバイト": "アルバイト",
+                "パート": "パート",
+                "正社員": "正社員",
+                "契約社員": "契約社員",
+                "派遣社員": "派遣社員",
+                "業務委託": "業務委託",
+                "インターン": "インターン",
+            }
             employment_type_selectors = [
                 "[class*='Badge__StyledRoot']",
-                "[class*='badge']",
-                "[class*='Badge']",
-                "[class*='tag']",
-                "[class*='Tag']",
-                "[class*='label']",
-                "[class*='Label']",
-                "[class*='employment']",
-                "[class*='Employment']",
             ]
             for sel in employment_type_selectors:
                 badge_elems = await card.query_selector_all(sel)
@@ -632,16 +642,12 @@ class LineBaitoScraper(BaseScraper):
                     try:
                         badge_text = await badge_elem.inner_text()
                         badge_text = badge_text.strip()
-                        # 雇用形態のキーワードにマッチするか
-                        if badge_text in EMPLOYMENT_TYPES:
-                            data["employment_type"] = badge_text
-                            break
-                        # 部分一致も確認
-                        for emp_type in EMPLOYMENT_TYPES:
-                            if emp_type in badge_text:
-                                data["employment_type"] = emp_type
-                                break
-                        if data.get("employment_type"):
+                        # NEWなどのスキップすべきテキストは除外
+                        if badge_text in {"NEW", "新着", "急募", "PR"}:
+                            continue
+                        # マッピングから雇用形態を取得
+                        if badge_text in EMPLOYMENT_TYPE_MAP:
+                            data["employment_type"] = EMPLOYMENT_TYPE_MAP[badge_text]
                             break
                     except:
                         continue
