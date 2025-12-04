@@ -198,7 +198,7 @@ class CrawlWorker(QThread):
                             break
 
                         # 進捗を報告
-                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク"}
+                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク", "linebaito": "LINEバイト", "machbaito": "マッハバイト"}
                         source_label = source_labels.get(source, source)
                         self._current_task = f"[{source_label}] {area} × {kw}"
                         self.progress.emit(f"{self._current_task} を検索中...", current_idx[0] + 1, total_combinations)
@@ -244,6 +244,14 @@ class CrawlWorker(QThread):
                         elif source == "linebaito":
                             result = loop.run_until_complete(
                                 self.service.crawl_linebaito(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=self.max_pages
+                                )
+                            )
+                        elif source == "machbaito":
+                            result = loop.run_until_complete(
+                                self.service.crawl_machbaito(
                                     keywords=[kw],
                                     areas=[area],
                                     max_pages=self.max_pages
@@ -323,7 +331,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         """UIを初期化"""
-        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed / バイトル / ハローワーク")
+        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed / バイトル / ハローワーク / LINEバイト / マッハバイト")
         self.setMinimumSize(1200, 800)
 
         # メインウィジェット
@@ -392,6 +400,11 @@ class MainWindow(QMainWindow):
         self.linebaito_check.setChecked(False)
         self.linebaito_check.setToolTip("LINEバイト求人検索（React SPA対応）")
         source_layout.addWidget(self.linebaito_check)
+
+        self.machbaito_check = QCheckBox("マッハバイト")
+        self.machbaito_check.setChecked(False)
+        self.machbaito_check.setToolTip("マッハバイト求人検索（machbaito.jp）")
+        source_layout.addWidget(self.machbaito_check)
 
         layout.addWidget(source_group)
 
@@ -1308,6 +1321,8 @@ class MainWindow(QMainWindow):
             sources.append("hellowork")
         if self.linebaito_check.isChecked():
             sources.append("linebaito")
+        if self.machbaito_check.isChecked():
+            sources.append("machbaito")
         return sources
 
     def start_crawl(self):

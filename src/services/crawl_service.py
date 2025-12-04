@@ -18,6 +18,7 @@ from scrapers.indeed import IndeedScraper
 from scrapers.baitoru import BaitoruScraper
 from scrapers.hellowork import HelloworkScraper
 from scrapers.linebaito import LineBaitoScraper
+from scrapers.machbaito import MachbaitoScraper
 from src.database.db_manager import DatabaseManager
 from src.database.job_repository import JobRepository
 from src.filters.job_filter import JobFilter, FilterResult
@@ -1876,6 +1877,220 @@ async def main():
             area="東京"
         )
         print(f"CSV出力: {csv_path}")
+
+
+class CrawlServiceMachbaito:
+    """マッハバイト用のクロールメソッド（CrawlServiceに追加）"""
+    pass
+
+
+# CrawlServiceにマッハバイト用メソッドを追加
+async def crawl_machbaito(
+    self,
+    keywords: List[str],
+    areas: List[str],
+    max_pages: int = 3,
+    filters: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    マッハバイトをクロール
+
+    Args:
+        keywords: 検索キーワードリスト
+        areas: 地域リスト（都道府県名）
+        max_pages: 最大ページ数
+        filters: 検索フィルタ
+
+    Returns:
+        クロール結果
+    """
+    result = {
+        'source': 'machbaito',
+        'keywords': keywords,
+        'areas': areas,
+        'started_at': datetime.now(),
+        'finished_at': None,
+        'total_count': 0,
+        'scraped_count': 0,
+        'saved_count': 0,
+        'new_count': 0,
+        'duplicate_count': 0,
+        'existing_count': 0,
+        'jobs': [],
+        'error': None,
+    }
+
+    try:
+        from playwright.async_api import async_playwright
+        from utils.stealth import StealthConfig, create_stealth_context
+
+        self._report_progress("マッハバイト クローリング開始", 0, 1)
+
+        # スクレイパー初期化
+        scraper = MachbaitoScraper()
+        scraper.set_realtime_callback(self._report_realtime_count)
+
+        all_jobs = []
+        seen_job_ids = set()
+        total_raw_count = 0
+
+        async with async_playwright() as p:
+            launch_args = StealthConfig.get_launch_args()
+            launch_args["headless"] = False
+
+            browser = await p.chromium.launch(**launch_args)
+            logger.info("[マッハバイト] ブラウザ起動完了")
+
+            try:
+                context = await create_stealth_context(browser, block_resources=True)
+                logger.info("[マッハバイト] Stealthコンテキスト作成完了")
+
+                page = await context.new_page()
+                await StealthConfig.apply_stealth_scripts(page)
+                if hasattr(context, '_block_resources') and context._block_resources:
+                    await context._setup_route_blocking(page)
+
+                total_combinations = len(keywords) * len(areas)
+                current_idx = 0
+
+                for keyword in keywords:
+                    for area in areas:
+                        current_idx += 1
+                        self._report_progress(
+                            f"[マッハバイト] {area} × {keyword} を検索中...",
+                            current_idx,
+                            total_combinations
+                        )
+
+                        # スクレイピング実行
+                        search_result = await scraper.search_jobs(
+                            page=page,
+                            keyword=keyword,
+                            area=area,
+                            max_pages=max_pages
+                        )
+
+                        jobs = search_result.get('jobs', [])
+                        raw_count = search_result.get('raw_count', len(jobs))
+                        total_raw_count += raw_count
+
+                        # 重複チェック
+                        for job in jobs:
+                            job_id = job.get('job_id')
+                            if job_id and job_id in seen_job_ids:
+                                continue
+                            if job_id:
+                                seen_job_ids.add(job_id)
+                            all_jobs.append(job)
+
+                        logger.info(f"[マッハバイト] {area} × {keyword}: {len(jobs)}件取得")
+
+            finally:
+                await browser.close()
+                logger.info("[マッハバイト] ブラウザ終了")
+
+        result['total_count'] = total_raw_count
+        result['scraped_count'] = len(all_jobs)
+
+        # 保存処理
+        self._report_progress("マッハバイト 保存処理中...", 1, 2)
+        saved_count = 0
+        new_count = 0
+
+        for job in all_jobs:
+            try:
+                if job.get('page_url'):
+                    job['page_url'] = self._normalize_url(job['page_url'])
+
+                job['crawled_at'] = datetime.now()
+                _, is_new = self.job_repository.save_job(job, "machbaito")
+
+                saved_count += 1
+                if is_new:
+                    new_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to save job: {e}")
+
+        result['saved_count'] = saved_count
+        result['new_count'] = new_count
+        result['jobs'] = [_prepare_machbaito_job_record(job) for job in all_jobs]
+
+        self._report_progress(f"保存完了: {saved_count}件（新着: {new_count}件）", 2, 2)
+        _save_crawl_log_machbaito(self, result)
+
+    except Exception as e:
+        result['error'] = str(e)
+        logger.error(f"マッハバイト crawl error: {e}", exc_info=True)
+
+    result['finished_at'] = datetime.now()
+    return result
+
+
+def _prepare_machbaito_job_record(job: Dict[str, Any]) -> Dict[str, Any]:
+    """マッハバイト用のテーブル表示データ整形"""
+    return {
+        "source_display_name": "マッハバイト",
+        "job_id": job.get("job_id", ""),
+        "company_name": job.get("company_name", ""),
+        "job_title": job.get("title", job.get("job_title", "")),
+        "work_location": job.get("location", job.get("work_location", "")),
+        "address": job.get("location", ""),
+        "address_pref": job.get("location", ""),
+        "postal_code": "",
+        "salary": job.get("salary", ""),
+        "employment_type": "",
+        "page_url": job.get("page_url", ""),
+        "crawled_at": job.get("crawled_at"),
+        "working_hours": job.get("working_hours", ""),
+        "holidays": "",
+        "phone": job.get("phone", ""),
+        "phone_number": job.get("phone", ""),
+        "phone_number_normalized": "",
+        "business_content": job.get("job_description", ""),
+        "job_description": job.get("job_description", ""),
+        "qualifications": "",
+        "published_date": "",
+    }
+
+
+def _save_crawl_log_machbaito(service, result: Dict[str, Any]):
+    """マッハバイトのクロールログを保存"""
+    source_id = service.db_manager.get_source_id("machbaito")
+    if not source_id:
+        with service.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR IGNORE INTO sources (name, url) VALUES (?, ?)",
+                ("machbaito", "https://machbaito.jp")
+            )
+            conn.commit()
+        source_id = service.db_manager.get_source_id("machbaito")
+
+    if source_id:
+        with service.db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO crawl_logs (
+                    source_id, keyword, area, status,
+                    total_count, new_count, error_message,
+                    started_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                source_id,
+                ','.join(result['keywords']),
+                ','.join(result['areas']),
+                'error' if result['error'] else 'success',
+                result['total_count'],
+                result['new_count'],
+                result['error'],
+                result['started_at'],
+                result['finished_at'],
+            ))
+            conn.commit()
+
+
+# CrawlServiceにメソッドを追加
+CrawlService.crawl_machbaito = crawl_machbaito
 
 
 if __name__ == "__main__":
