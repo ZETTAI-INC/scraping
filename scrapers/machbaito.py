@@ -432,47 +432,76 @@ class MachbaitoScraper(BaseScraper):
         try:
             data = {"site": "マッハバイト"}
 
-            # 雇用形態を抽出（複数のセレクタを試す）
-            # <li class="p-works-work-header-tag misc">アルバイト・パート</li>
-            employment_selectors = [
-                "li.p-works-work-header-tag",
-                ".p-works-work-header-tag",
-                "li[class*='header-tag']",
-                "[class*='header-tag']",
-                "[class*='employment']",
-                "[class*='job-type']",
-                "li.tag",
-                ".tag:first-child",
-            ]
+            # 雇用形態キーワード
             emp_keywords = ["アルバイト", "パート", "正社員", "派遣", "契約", "業務委託", "登録制"]
 
-            for selector in employment_selectors:
-                try:
-                    emp_type_elem = await card.query_selector(selector)
-                    if emp_type_elem:
-                        emp_type_text = await emp_type_elem.inner_text()
-                        if emp_type_text:
-                            emp_text = emp_type_text.strip()
-                            # 雇用形態のキーワードが含まれているか確認
-                            for kw in emp_keywords:
-                                if kw in emp_text:
-                                    data["employment_type"] = emp_text
-                                    logger.debug(f"[マッハバイト] 雇用形態検出: {emp_text} (セレクタ: {selector})")
+            # 親要素を取得して雇用形態を探す
+            # カードがaタグの場合、親のli要素から雇用形態を取得
+            try:
+                # 親要素を取得（複数レベル試す）
+                parent_elem = await card.evaluate_handle("el => el.parentElement")
+                if parent_elem:
+                    parent = parent_elem.as_element()
+                    if parent:
+                        # 親要素から雇用形態セレクタを探す
+                        employment_selectors = [
+                            "li.p-works-work-header-tag",
+                            ".p-works-work-header-tag",
+                            "[class*='header-tag']",
+                        ]
+                        for selector in employment_selectors:
+                            try:
+                                emp_elem = await parent.query_selector(selector)
+                                if emp_elem:
+                                    emp_text = await emp_elem.inner_text()
+                                    if emp_text:
+                                        emp_text = emp_text.strip()
+                                        for kw in emp_keywords:
+                                            if kw in emp_text:
+                                                data["employment_type"] = emp_text
+                                                logger.debug(f"[マッハバイト] 雇用形態(親): {emp_text}")
+                                                break
+                                        if "employment_type" in data:
+                                            break
+                            except:
+                                continue
+            except Exception as e:
+                logger.debug(f"[マッハバイト] 親要素取得エラー: {e}")
+
+            # カード内からも試す
+            if "employment_type" not in data:
+                employment_selectors = [
+                    "li.p-works-work-header-tag",
+                    ".p-works-work-header-tag",
+                    "[class*='header-tag']",
+                    "[class*='employment']",
+                    "[class*='job-type']",
+                ]
+                for selector in employment_selectors:
+                    try:
+                        emp_type_elem = await card.query_selector(selector)
+                        if emp_type_elem:
+                            emp_type_text = await emp_type_elem.inner_text()
+                            if emp_type_text:
+                                emp_text = emp_type_text.strip()
+                                for kw in emp_keywords:
+                                    if kw in emp_text:
+                                        data["employment_type"] = emp_text
+                                        logger.debug(f"[マッハバイト] 雇用形態(カード): {emp_text}")
+                                        break
+                                if "employment_type" in data:
                                     break
-                            if "employment_type" in data:
-                                break
-                except Exception as e:
-                    logger.debug(f"[マッハバイト] セレクタ {selector} エラー: {e}")
-                    continue
+                    except:
+                        continue
 
             # カード内テキストからも雇用形態を探す（フォールバック）
             if "employment_type" not in data:
                 card_text = await card.inner_text()
-                first_lines = card_text.split('\n')[:3]
+                first_lines = card_text.split('\n')[:5]
                 for line in first_lines:
                     line = line.strip()
                     for kw in emp_keywords:
-                        if kw in line and len(line) <= 20:
+                        if kw in line and len(line) <= 25:
                             data["employment_type"] = line
                             logger.debug(f"[マッハバイト] 雇用形態(テキスト): {line}")
                             break
