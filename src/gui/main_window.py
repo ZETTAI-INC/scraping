@@ -198,7 +198,7 @@ class CrawlWorker(QThread):
                             break
 
                         # 進捗を報告
-                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク", "linebaito": "LINEバイト", "machbaito": "マッハバイト"}
+                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク", "linebaito": "LINEバイト", "machbaito": "マッハバイト", "entenshoku": "エン転職"}
                         source_label = source_labels.get(source, source)
                         self._current_task = f"[{source_label}] {area} × {kw}"
                         self.progress.emit(f"{self._current_task} を検索中...", current_idx[0] + 1, total_combinations)
@@ -252,6 +252,14 @@ class CrawlWorker(QThread):
                         elif source == "machbaito":
                             result = loop.run_until_complete(
                                 self.service.crawl_machbaito(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=self.max_pages
+                                )
+                            )
+                        elif source == "entenshoku":
+                            result = loop.run_until_complete(
+                                self.service.crawl_entenshoku(
                                     keywords=[kw],
                                     areas=[area],
                                     max_pages=self.max_pages
@@ -331,7 +339,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         """UIを初期化"""
-        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed / バイトル / ハローワーク / LINEバイト / マッハバイト")
+        self.setWindowTitle("求人情報自動収集システム - タウンワーク / Indeed / バイトル / ハローワーク / LINEバイト / マッハバイト / エン転職")
         self.setMinimumSize(1200, 800)
 
         # メインウィジェット
@@ -373,38 +381,45 @@ class MainWindow(QMainWindow):
         layout.setSpacing(5)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # 媒体選択（タブの上に配置）
+        # 媒体選択（タブの上に配置）- 2列で4・3配置
         source_group = QGroupBox("対象媒体")
-        source_layout = QVBoxLayout(source_group)
+        source_layout = QGridLayout(source_group)
+        source_layout.setHorizontalSpacing(10)
+        source_layout.setVerticalSpacing(5)
 
         self.townwork_check = QCheckBox("タウンワーク")
         self.townwork_check.setChecked(True)
-        source_layout.addWidget(self.townwork_check)
+        source_layout.addWidget(self.townwork_check, 0, 0)
 
         self.indeed_check = QCheckBox("Indeed")
         self.indeed_check.setChecked(False)
         self.indeed_check.setToolTip("Indeed検索（403対策のため1ページ/組み合わせに制限）")
-        source_layout.addWidget(self.indeed_check)
+        source_layout.addWidget(self.indeed_check, 0, 1)
 
         self.baitoru_check = QCheckBox("バイトル")
         self.baitoru_check.setChecked(False)
         self.baitoru_check.setToolTip("バイトル検索（カテゴリがない場合はキーワード検索にフォールバック）")
-        source_layout.addWidget(self.baitoru_check)
+        source_layout.addWidget(self.baitoru_check, 1, 0)
 
         self.hellowork_check = QCheckBox("ハローワーク")
         self.hellowork_check.setChecked(False)
         self.hellowork_check.setToolTip("ハローワーク求人検索（都道府県選択でフォーム検索）")
-        source_layout.addWidget(self.hellowork_check)
+        source_layout.addWidget(self.hellowork_check, 1, 1)
 
         self.linebaito_check = QCheckBox("LINEバイト")
         self.linebaito_check.setChecked(False)
         self.linebaito_check.setToolTip("LINEバイト求人検索（React SPA対応）")
-        source_layout.addWidget(self.linebaito_check)
+        source_layout.addWidget(self.linebaito_check, 2, 0)
 
         self.machbaito_check = QCheckBox("マッハバイト")
         self.machbaito_check.setChecked(False)
         self.machbaito_check.setToolTip("マッハバイト求人検索（machbaito.jp）")
-        source_layout.addWidget(self.machbaito_check)
+        source_layout.addWidget(self.machbaito_check, 2, 1)
+
+        self.entenshoku_check = QCheckBox("エン転職")
+        self.entenshoku_check.setChecked(False)
+        self.entenshoku_check.setToolTip("エン転職求人検索（employment.en-japan.com）")
+        source_layout.addWidget(self.entenshoku_check, 3, 0)
 
         layout.addWidget(source_group)
 
@@ -653,12 +668,22 @@ class MainWindow(QMainWindow):
         root_logger.addHandler(console_handler)
         root_logger.setLevel(logging.DEBUG)
 
-        # 主要なロガーにも伝播を確認
-        for logger_name in ['scrapers', 'src', 'utils', 'scrapers.townwork', 'scrapers.baitoru',
-                            'scrapers.base_scraper', 'src.services', 'src.services.crawl_service']:
+        # 主要なロガーにも伝播を確認（全スクレイパーを含む）
+        logger_names = [
+            'scrapers', 'src', 'utils',
+            'scrapers.townwork', 'scrapers.baitoru', 'scrapers.linebaito',
+            'scrapers.machbaito', 'scrapers.hellowork', 'scrapers.entenshoku',
+            'scrapers.base_scraper', 'scrapers.indeed',
+            'src.services', 'src.services.crawl_service',
+            'playwright', 'asyncio'
+        ]
+        for logger_name in logger_names:
             child_logger = logging.getLogger(logger_name)
             child_logger.setLevel(logging.DEBUG)
             child_logger.propagate = True  # 親ロガーに伝播
+            # 既存のハンドラがあれば追加でGUIハンドラを設定
+            if not any(isinstance(h, type(self.gui_log_handler)) for h in child_logger.handlers):
+                child_logger.addHandler(self.gui_log_handler)
 
     def append_log(self, message: str):
         """ログメッセージを追加"""
@@ -1323,6 +1348,8 @@ class MainWindow(QMainWindow):
             sources.append("linebaito")
         if self.machbaito_check.isChecked():
             sources.append("machbaito")
+        if self.entenshoku_check.isChecked():
+            sources.append("entenshoku")
         return sources
 
     def start_crawl(self):
@@ -1361,6 +1388,10 @@ class MainWindow(QMainWindow):
             source_names.append("ハローワーク")
         if "linebaito" in sources:
             source_names.append("LINEバイト")
+        if "machbaito" in sources:
+            source_names.append("マッハバイト")
+        if "entenshoku" in sources:
+            source_names.append("エン転職")
 
         # 確認ダイアログ
         total_combinations = len(keywords) * len(areas) * len(sources)
