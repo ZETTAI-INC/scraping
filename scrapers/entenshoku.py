@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 class EntenshokuScraper(BaseScraper):
     """エン転職用スクレイパー"""
 
+    # 都道府県名のマッピング（短縮形 → 正式名称）
+    PREFECTURE_NAMES = {
+        "北海道": "北海道",
+        "青森": "青森県", "岩手": "岩手県", "宮城": "宮城県", "秋田": "秋田県", "山形": "山形県", "福島": "福島県",
+        "茨城": "茨城県", "栃木": "栃木県", "群馬": "群馬県", "埼玉": "埼玉県", "千葉": "千葉県", "東京": "東京都", "神奈川": "神奈川県",
+        "新潟": "新潟県", "富山": "富山県", "石川": "石川県", "福井": "福井県", "山梨": "山梨県", "長野": "長野県",
+        "岐阜": "岐阜県", "静岡": "静岡県", "愛知": "愛知県", "三重": "三重県",
+        "滋賀": "滋賀県", "京都": "京都府", "大阪": "大阪府", "兵庫": "兵庫県", "奈良": "奈良県", "和歌山": "和歌山県",
+        "鳥取": "鳥取県", "島根": "島根県", "岡山": "岡山県", "広島": "広島県", "山口": "山口県",
+        "徳島": "徳島県", "香川": "香川県", "愛媛": "愛媛県", "高知": "高知県",
+        "福岡": "福岡県", "佐賀": "佐賀県", "長崎": "長崎県", "熊本": "熊本県", "大分": "大分県", "宮崎": "宮崎県", "鹿児島": "鹿児島県", "沖縄": "沖縄県"
+    }
+
     def __init__(self):
         super().__init__(site_name="entenshoku")
         self._current_search_area: Optional[str] = None
@@ -223,7 +236,11 @@ class EntenshokuScraper(BaseScraper):
                     data["salary"] = line
                     break
 
-            return data if data.get("page_url") and data.get("job_number") else None
+            if data.get("page_url") and data.get("job_number"):
+                return data
+            else:
+                logger.debug(f"[エン転職] カードデータ不完全でスキップ: page_url={data.get('page_url')}, job_number={data.get('job_number')}")
+                return None
 
         except Exception as e:
             logger.error(f"Error extracting card data: {e}")
@@ -290,6 +307,9 @@ class EntenshokuScraper(BaseScraper):
                     logger.info(f"[エン転職] ページ{page_num}で求人なし、終了")
                     break
 
+                # 発見された求人番号をログ出力
+                found_job_numbers = list(job_cards_dict.keys())
+                logger.debug(f"[エン転職] 発見した求人番号: {found_job_numbers}")
                 logger.info(f"[エン転職] ページ{page_num}で{len(job_cards)}件のリンクを発見")
 
                 page_jobs = 0
@@ -512,6 +532,27 @@ class EntenshokuScraper(BaseScraper):
 
         return detail_data
 
+    def _location_matches_area(self, location: str, area: str) -> bool:
+        """
+        勤務地が検索エリアの都道府県と一致するかチェック
+        """
+        if not location or not area:
+            return True  # 勤務地が取得できない場合は除外しない
+
+        # 検索エリアの正式な都道府県名を取得
+        target_prefecture = self.PREFECTURE_NAMES.get(area, area)
+
+        # 勤務地に都道府県名が含まれているかチェック
+        # 例: 東京 → 東京都 をチェック
+        if target_prefecture in location:
+            return True
+
+        # 短縮形でもチェック（例: "東京" が勤務地に含まれているか）
+        if area in location:
+            return True
+
+        return False
+
     async def scrape_with_details(self, page: Page, keyword: str, area: str,
                                    max_pages: int = 5, fetch_details: bool = True) -> List[Dict[str, Any]]:
         """
@@ -524,14 +565,31 @@ class EntenshokuScraper(BaseScraper):
             return jobs
 
         # 各求人の詳細情報を取得
+        filtered_jobs = []
+        skipped_count = 0
+
         for i, job in enumerate(jobs):
             if job.get("page_url"):
                 logger.info(f"[エン転職] 詳細取得 {i+1}/{len(jobs)}: {job['page_url']}")
                 try:
                     detail_data = await self.extract_detail_info(page, job["page_url"])
                     job.update(detail_data)
+
+                    # 勤務地が検索エリアと一致するかチェック
+                    location = job.get("location", "")
+                    if self._location_matches_area(location, area):
+                        filtered_jobs.append(job)
+                    else:
+                        skipped_count += 1
+                        logger.debug(f"[エン転職] 勤務地不一致でスキップ: {job.get('company_name', 'unknown')} - 勤務地: {location}, 検索エリア: {area}")
+
                     await page.wait_for_timeout(1000)
                 except Exception as e:
                     logger.error(f"Error fetching detail for job {i+1}: {e}")
+                    # エラーの場合も含める（詳細取得失敗のみでスキップしない）
+                    filtered_jobs.append(job)
 
-        return jobs
+        if skipped_count > 0:
+            logger.info(f"[エン転職] 勤務地不一致でスキップした求人: {skipped_count}件")
+
+        return filtered_jobs
