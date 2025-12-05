@@ -129,6 +129,7 @@ class EntenshokuScraper(BaseScraper):
         """
         求人カードからデータを抽出（search_jobs用）
         エン転職は複雑なカード構造のため、基本情報のみ抽出し詳細は別途取得
+        派遣社員・紹介予定派遣はスキップ
         """
         try:
             data = {}
@@ -150,6 +151,24 @@ class EntenshokuScraper(BaseScraper):
             # カード内のテキストを取得
             card_text = await card.inner_text()
             lines = [line.strip() for line in card_text.split('\n') if line.strip()]
+
+            # 派遣社員・紹介予定派遣をスキップ
+            dispatch_keywords = ['派遣社員', '紹介予定派遣', '無期雇用派遣']
+            card_text_joined = ' '.join(lines)
+            for keyword in dispatch_keywords:
+                if keyword in card_text_joined:
+                    logger.debug(f"[エン転職] 派遣求人をスキップ: {data.get('job_number', 'unknown')} ({keyword})")
+                    return None
+
+            # 雇用形態を抽出
+            employment_types = ['正社員', '契約社員', 'アルバイト', 'パート', '業務委託']
+            for line in lines:
+                for emp_type in employment_types:
+                    if emp_type in line:
+                        data["employment_type"] = emp_type
+                        break
+                if data.get("employment_type"):
+                    break
 
             # タイトル（最初の意味のある長い文字列）
             for line in lines[:5]:
@@ -302,27 +321,33 @@ class EntenshokuScraper(BaseScraper):
             body_text = await page.inner_text("body")
 
             # JSON-LDスキーマから会社名を取得（最も確実）
+            import json
             try:
                 json_ld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
+                logger.debug(f"[エン転職] JSON-LDスクリプト数: {len(json_ld_scripts)}")
                 for script in json_ld_scripts:
                     script_content = await script.inner_text()
-                    import json
                     try:
                         ld_data = json.loads(script_content)
+                        # 配列の場合は最初の要素を使用
+                        if isinstance(ld_data, list) and len(ld_data) > 0:
+                            ld_data = ld_data[0]
                         # hiringOrganization から会社名を取得
                         if isinstance(ld_data, dict):
                             if "hiringOrganization" in ld_data:
                                 org = ld_data["hiringOrganization"]
                                 if isinstance(org, dict) and "name" in org:
                                     detail_data["company_name"] = org["name"]
+                                    logger.debug(f"[エン転職] JSON-LDから会社名取得: {org['name']}")
                                     break
                             elif "name" in ld_data and ld_data.get("@type") == "Organization":
                                 detail_data["company_name"] = ld_data["name"]
+                                logger.debug(f"[エン転職] JSON-LD Organizationから会社名取得: {ld_data['name']}")
                                 break
-                    except json.JSONDecodeError:
-                        pass
-            except Exception:
-                pass
+                    except json.JSONDecodeError as e:
+                        logger.debug(f"[エン転職] JSON-LDパースエラー: {e}")
+            except Exception as e:
+                logger.debug(f"[エン転職] JSON-LD取得エラー: {e}")
 
             # JSON-LDで取得できなかった場合、ページ上部の会社名要素から取得
             if not detail_data.get("company_name"):
@@ -370,6 +395,20 @@ class EntenshokuScraper(BaseScraper):
                     company_text = (await company_elem.inner_text()).strip()
                     if company_text and any(x in company_text for x in ['株式会社', '有限会社', '合同会社', '社団法人', '財団法人', '医療法人']):
                         detail_data["company_name"] = company_text
+
+            # 会社名がまだ取得できていない場合、ページタイトルから取得
+            # 「株式会社○○の転職・求人情報｜エン転職｜...」形式
+            if not detail_data.get("company_name"):
+                try:
+                    page_title = await page.title()
+                    if page_title and "の転職・求人情報" in page_title:
+                        # 「会社名の転職・求人情報」から会社名を抽出
+                        company_from_title = page_title.split("の転職・求人情報")[0].strip()
+                        if company_from_title and len(company_from_title) > 2:
+                            detail_data["company_name"] = company_from_title
+                            logger.debug(f"ページタイトルから会社名を取得: {company_from_title}")
+                except Exception as e:
+                    logger.debug(f"ページタイトルからの会社名取得失敗: {e}")
 
             # 給与の抽出
             salary_match = re.search(r"(月給|年収|時給)[：:\s]*([0-9,万円～\-\s]+)", body_text)
