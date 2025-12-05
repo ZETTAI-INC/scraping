@@ -353,7 +353,7 @@ class EntenshokuScraper(BaseScraper):
             # ページ全体のテキストを取得
             body_text = await page.inner_text("body")
 
-            # JSON-LDスキーマから会社名を取得（最も確実）
+            # JSON-LDスキーマから会社名と会社住所を取得（最も確実）
             import json
             try:
                 json_ld_scripts = await page.query_selector_all('script[type="application/ld+json"]')
@@ -365,13 +365,25 @@ class EntenshokuScraper(BaseScraper):
                         # 配列の場合は最初の要素を使用
                         if isinstance(ld_data, list) and len(ld_data) > 0:
                             ld_data = ld_data[0]
-                        # hiringOrganization から会社名を取得
+                        # hiringOrganization から会社名と住所を取得
                         if isinstance(ld_data, dict):
                             if "hiringOrganization" in ld_data:
                                 org = ld_data["hiringOrganization"]
-                                if isinstance(org, dict) and "name" in org:
-                                    detail_data["company_name"] = org["name"]
-                                    logger.debug(f"[エン転職] JSON-LDから会社名取得: {org['name']}")
+                                if isinstance(org, dict):
+                                    if "name" in org:
+                                        detail_data["company_name"] = org["name"]
+                                        logger.debug(f"[エン転職] JSON-LDから会社名取得: {org['name']}")
+                                    # 会社住所を取得（事業所住所）
+                                    if "address" in org:
+                                        addr = org["address"]
+                                        if isinstance(addr, dict):
+                                            # streetAddress が住所
+                                            street = addr.get("streetAddress", "")
+                                            if street:
+                                                detail_data["company_address"] = street
+                                                logger.debug(f"[エン転職] JSON-LDから会社住所取得: {street}")
+                                        elif isinstance(addr, str):
+                                            detail_data["company_address"] = addr
                                     break
                             elif "name" in ld_data and ld_data.get("@type") == "Organization":
                                 detail_data["company_name"] = ld_data["name"]

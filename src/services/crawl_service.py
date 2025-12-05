@@ -2354,14 +2354,16 @@ def _get_existing_entenshoku_job_ids(service) -> set:
 
 def _prepare_entenshoku_job_record(job: Dict[str, Any]) -> Dict[str, Any]:
     """エン転職用のテーブル表示データ整形"""
+    # 住所1には事業所住所（company_address）を優先、なければ勤務地（location）を使用
+    address_pref = job.get("company_address", "") or job.get("location", "")
     return {
         "source_display_name": "エン転職",
         "job_id": job.get("job_number", ""),
         "company_name": job.get("company_name", ""),
         "job_title": job.get("title", job.get("job_title", "")),
         "work_location": job.get("location", job.get("work_location", "")),
-        "address": job.get("location", ""),
-        "address_pref": job.get("location", ""),
+        "address": address_pref,
+        "address_pref": address_pref,
         "postal_code": "",
         "salary": job.get("salary", ""),
         "employment_type": job.get("employment_type", ""),
