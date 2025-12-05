@@ -567,27 +567,48 @@ class EntenshokuScraper(BaseScraper):
         # 各求人の詳細情報を取得
         filtered_jobs = []
         skipped_count = 0
+        max_retries = 3  # 最大リトライ回数
 
         for i, job in enumerate(jobs):
             if job.get("page_url"):
                 logger.info(f"[エン転職] 詳細取得 {i+1}/{len(jobs)}: {job['page_url']}")
-                try:
-                    detail_data = await self.extract_detail_info(page, job["page_url"])
-                    job.update(detail_data)
 
-                    # 勤務地が検索エリアと一致するかチェック
-                    location = job.get("location", "")
-                    if self._location_matches_area(location, area):
-                        filtered_jobs.append(job)
-                    else:
-                        skipped_count += 1
-                        logger.debug(f"[エン転職] 勤務地不一致でスキップ: {job.get('company_name', 'unknown')} - 勤務地: {location}, 検索エリア: {area}")
+                # リトライロジック：会社名が取得できるまで最大3回リトライ
+                detail_data = {}
+                for retry in range(max_retries):
+                    try:
+                        detail_data = await self.extract_detail_info(page, job["page_url"])
 
-                    await page.wait_for_timeout(1000)
-                except Exception as e:
-                    logger.error(f"Error fetching detail for job {i+1}: {e}")
-                    # エラーの場合も含める（詳細取得失敗のみでスキップしない）
+                        # 会社名が取得できたかチェック
+                        if detail_data.get("company_name"):
+                            if retry > 0:
+                                logger.info(f"[エン転職] リトライ{retry+1}回目で会社名取得成功: {detail_data['company_name']}")
+                            break
+                        else:
+                            if retry < max_retries - 1:
+                                logger.warning(f"[エン転職] 会社名取得失敗、リトライ {retry+2}/{max_retries}: {job['page_url']}")
+                                await page.wait_for_timeout(2000)  # リトライ前に少し長めに待機
+                            else:
+                                logger.warning(f"[エン転職] 会社名取得失敗（リトライ上限）: {job['page_url']}")
+
+                    except Exception as e:
+                        if retry < max_retries - 1:
+                            logger.warning(f"[エン転職] 詳細取得エラー、リトライ {retry+2}/{max_retries}: {e}")
+                            await page.wait_for_timeout(2000)
+                        else:
+                            logger.error(f"Error fetching detail for job {i+1} after {max_retries} retries: {e}")
+
+                job.update(detail_data)
+
+                # 勤務地が検索エリアと一致するかチェック
+                location = job.get("location", "")
+                if self._location_matches_area(location, area):
                     filtered_jobs.append(job)
+                else:
+                    skipped_count += 1
+                    logger.debug(f"[エン転職] 勤務地不一致でスキップ: {job.get('company_name', 'unknown')} - 勤務地: {location}, 検索エリア: {area}")
+
+                await page.wait_for_timeout(1000)
 
         if skipped_count > 0:
             logger.info(f"[エン転職] 勤務地不一致でスキップした求人: {skipped_count}件")
