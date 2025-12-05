@@ -433,11 +433,11 @@ class TownworkScraper(BaseScraper):
             if oc_code == "query" and isinstance(omc_code, list):
                 # クエリパラメータ形式（複数omc指定）
                 omc_params = "&".join([f"omc={code}" for code in omc_code])
-                # emp=01&emp=04 (アルバイト・パート) + act=true (新着)
+                # emp=01,02,03,05 + act=true (新着)
                 if page > 1:
-                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/?{omc_params}&emp=01&emp=04&act=true&page={page}"
+                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/?{omc_params}&emp=01&emp=02&emp=03&emp=05&act=true&page={page}"
                 else:
-                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/?{omc_params}&emp=01&emp=04&act=true"
+                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/?{omc_params}&emp=01&emp=02&emp=03&emp=05&act=true"
                 logger.info(f"[タウンワーク] クエリパラメータ形式URL: {base_url}")
             elif omc_code:
                 # 小カテゴリあり
