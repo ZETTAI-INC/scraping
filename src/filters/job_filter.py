@@ -306,13 +306,29 @@ class JobFilter:
                 return f"除外業界（{industry}）"
 
         # Step 5: 勤務地フィルタ
+        # 沖縄のみの場合は除外、他の都道府県も含まれていれば除外しない
         address_pref = job.get('address_pref', '')
         work_location = job.get('work_location', job.get('location', ''))
         location_text = f"{address_pref} {work_location}"
 
         for location in self.exclude_locations:
             if location in location_text:
-                return f"除外勤務地（{location}）"
+                # 他の都道府県が含まれているかチェック
+                other_prefectures = [
+                    '北海道', '青森', '岩手', '宮城', '秋田', '山形', '福島',
+                    '茨城', '栃木', '群馬', '埼玉', '千葉', '東京', '神奈川',
+                    '新潟', '富山', '石川', '福井', '山梨', '長野',
+                    '岐阜', '静岡', '愛知', '三重',
+                    '滋賀', '京都', '大阪', '兵庫', '奈良', '和歌山',
+                    '鳥取', '島根', '岡山', '広島', '山口',
+                    '徳島', '香川', '愛媛', '高知',
+                    '福岡', '佐賀', '長崎', '熊本', '大分', '宮崎', '鹿児島',
+                    '全国'  # 全国勤務も通過
+                ]
+                has_other_prefecture = any(pref in location_text for pref in other_prefectures)
+                if not has_other_prefecture:
+                    # 沖縄のみの場合は除外
+                    return f"除外勤務地（{location}）"
 
         # Step 6: 電話番号プレフィックスフィルタ
         phone = job.get('phone_number_normalized', '')
