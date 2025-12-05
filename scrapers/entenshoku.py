@@ -366,6 +366,8 @@ class EntenshokuScraper(BaseScraper):
             if not detail_data.get("company_name"):
                 # エン転職の会社名は通常ページ上部にある
                 company_selectors = [
+                    "#descCompanyName .company .text",  # メインの会社名表示
+                    "#descCompanyName .text",
                     "p.companyName",
                     ".companyName",
                     "[class*='company-name']",
