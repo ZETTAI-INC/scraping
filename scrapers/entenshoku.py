@@ -71,8 +71,8 @@ class EntenshokuScraper(BaseScraper):
                     href = f"https://employment.en-japan.com{href}"
                 job_data["page_url"] = href
 
-                # 求人番号を抽出（例: /desc_1393025/ → 1393025）
-                match = re.search(r"/desc_(\d+)", href)
+                # 求人番号を抽出（例: /desc_1393025/ または /desc_eng_7365499/ → 1393025 or 7365499）
+                match = re.search(r"/desc_(?:eng_)?(\d+)", href)
                 if match:
                     job_data["job_number"] = match.group(1)
 
@@ -143,8 +143,8 @@ class EntenshokuScraper(BaseScraper):
                     base_href = f"https://employment.en-japan.com{base_href}"
                 data["page_url"] = base_href
 
-                # 求人番号を抽出
-                match = re.search(r"/desc_(\d+)", href)
+                # 求人番号を抽出（desc_eng_も対応）
+                match = re.search(r"/desc_(?:eng_)?(\d+)", href)
                 if match:
                     data["job_number"] = match.group(1)
 
@@ -277,7 +277,7 @@ class EntenshokuScraper(BaseScraper):
                 for link in all_links:
                     href = await link.get_attribute("href")
                     if href:
-                        match = re.search(r"/desc_(\d+)", href)
+                        match = re.search(r"/desc_(?:eng_)?(\d+)", href)
                         if match:
                             job_num = match.group(1)
                             # まだ登録されていない求人番号のみ追加
@@ -490,6 +490,22 @@ class EntenshokuScraper(BaseScraper):
             holiday_match = re.search(r"(休日|休暇)[：:\s]*(.+?)(?=\n福利|$)", body_text)
             if holiday_match:
                 detail_data["holidays"] = holiday_match.group(2).strip()
+
+            # 掲載期間から掲載日を抽出（例: 24/11/28 ～ 25/1/8 → 24/11/28）
+            period_match = re.search(r"掲載期間[：:\s]*(\d{2}/\d{1,2}/\d{1,2})\s*[～~－-]", body_text)
+            if period_match:
+                posted_date_raw = period_match.group(1)
+                # YY/MM/DD を YYYY-MM-DD に変換
+                try:
+                    parts = posted_date_raw.split("/")
+                    year = int(parts[0])
+                    month = int(parts[1])
+                    day = int(parts[2])
+                    # 2000年代として扱う
+                    full_year = 2000 + year
+                    detail_data["posted_date"] = f"{full_year}-{month:02d}-{day:02d}"
+                except (ValueError, IndexError):
+                    detail_data["posted_date"] = posted_date_raw
 
         except Exception as e:
             logger.error(f"Error extracting detail info from {url}: {e}")
