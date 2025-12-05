@@ -2375,7 +2375,8 @@ def _prepare_entenshoku_job_record(job: Dict[str, Any]) -> Dict[str, Any]:
         "business_content": job.get("job_description", ""),
         "job_description": job.get("job_description", ""),
         "qualifications": job.get("qualifications", ""),
-        "published_date": "",
+        "published_date": job.get("posted_date", ""),
+        "posted_date": job.get("posted_date", ""),
     }
 
 
