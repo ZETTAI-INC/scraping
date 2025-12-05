@@ -198,7 +198,7 @@ class CrawlWorker(QThread):
                             break
 
                         # 進捗を報告
-                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク", "linebaito": "LINEバイト", "machbaito": "マッハバイト", "entenshoku": "エン転職", "kaigojob": "カイゴジョブ"}
+                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク", "linebaito": "LINEバイト", "machbaito": "マッハバイト", "entenshoku": "エン転職", "kaigojob": "カイゴジョブ", "jobmedley": "ジョブメドレー"}
                         source_label = source_labels.get(source, source)
                         self._current_task = f"[{source_label}] {area} × {kw}"
                         self.progress.emit(f"{self._current_task} を検索中...", current_idx[0] + 1, total_combinations)
@@ -268,6 +268,14 @@ class CrawlWorker(QThread):
                         elif source == "kaigojob":
                             result = loop.run_until_complete(
                                 self.service.crawl_kaigojob(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=self.max_pages
+                                )
+                            )
+                        elif source == "jobmedley":
+                            result = loop.run_until_complete(
+                                self.service.crawl_jobmedley(
                                     keywords=[kw],
                                     areas=[area],
                                     max_pages=self.max_pages
@@ -433,6 +441,11 @@ class MainWindow(QMainWindow):
         self.kaigojob_check.setChecked(False)
         self.kaigojob_check.setToolTip("カイゴジョブ求人検索（kaigoagent.com）- 介護/事務/ドライバー")
         source_layout.addWidget(self.kaigojob_check, 3, 1)
+
+        self.jobmedley_check = QCheckBox("ジョブメドレー")
+        self.jobmedley_check.setChecked(False)
+        self.jobmedley_check.setToolTip("ジョブメドレー求人検索（job-medley.com）- 医療/介護/営業")
+        source_layout.addWidget(self.jobmedley_check, 4, 0)
 
         layout.addWidget(source_group)
 
@@ -1365,6 +1378,8 @@ class MainWindow(QMainWindow):
             sources.append("entenshoku")
         if self.kaigojob_check.isChecked():
             sources.append("kaigojob")
+        if self.jobmedley_check.isChecked():
+            sources.append("jobmedley")
         return sources
 
     def start_crawl(self):

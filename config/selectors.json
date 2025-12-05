@@ -1050,22 +1050,34 @@
   "jobmedley": {
     "name": "ジョブメドレー",
     "base_url": "https://job-medley.com",
-    "search_url_pattern": "https://job-medley.com/search/?keyword={keyword}&area={area}&page={page}",
+    "search_url_pattern": "https://job-medley.com/{category_code}/pref{pref_id}/?order=2&page={page}",
+    "note": "カテゴリコード(sr=営業, hh=介護, cm=ケアマネ等), 都道府県ID(pref13=東京等), order=2は新着順",
+    "category_codes": {
+      "営業": "sr",
+      "介護": "hh",
+      "ケアマネ": "cm",
+      "看護": "ans",
+      "事務": "mc",
+      "保育": "cw"
+    },
+    "prefecture_ids": {
+      "北海道": 1, "東京": 13, "神奈川": 14, "大阪": 27, "愛知": 23, "福岡": 40
+    },
     "selectors": {
-      "job_cards": ".job-item",
-      "title": ".job-item__title",
-      "company": ".job-item__company",
-      "location": ".job-item__location",
-      "salary": ".job-item__salary",
-      "employment_type": ".job-item__employment",
-      "detail_link": "a.job-item__link"
+      "job_cards": "a[href*='/sr/'], a[href*='/hh/']",
+      "title": "h1, .job-title",
+      "company": ".facility-name, [data-testid='facility-name']",
+      "location": ".address, [data-testid='address']",
+      "salary": ".salary, [data-testid='salary']",
+      "employment_type": ".employment-type",
+      "detail_link": "a[href*='/sr/'], a[href*='/hh/']"
     },
     "detail_selectors": {
       "job_number": ".job-number",
       "postal_code": ".zip-code",
       "phone": ".tel",
       "facility_name": ".facility-name",
-      "business_content": ".business-info",
+      "business_content": ".business-info, .appeal-body",
       "job_category": ".job-category"
     },
     "pagination": {
