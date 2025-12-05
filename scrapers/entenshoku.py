@@ -160,6 +160,19 @@ class EntenshokuScraper(BaseScraper):
                     logger.debug(f"[エン転職] 派遣求人をスキップ: {data.get('job_number', 'unknown')} ({keyword})")
                     return None
 
+            # PR記事（広告枠）をスキップ
+            # 「30名以上」「100名」「あと3日」などで始まるものはPR記事
+            if lines:
+                first_line = lines[0]
+                # 「XX名」「XX名以上」で始まるパターン
+                if re.match(r'^\d+名', first_line):
+                    logger.debug(f"[エン転職] PR記事をスキップ（人数表示）: {data.get('job_number', 'unknown')}")
+                    return None
+                # 「あとX日」で始まるパターン
+                if re.match(r'^あと\d+日', first_line):
+                    logger.debug(f"[エン転職] PR記事をスキップ（残り日数）: {data.get('job_number', 'unknown')}")
+                    return None
+
             # 雇用形態を抽出
             employment_types = ['正社員', '契約社員', 'アルバイト', 'パート', '業務委託']
             for line in lines:
