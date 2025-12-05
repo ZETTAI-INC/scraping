@@ -154,6 +154,10 @@ class CSVExporter:
         if not job.get('source_display_name'):
             processed['source_display_name'] = job.get('site', job.get('source_name', ''))
 
+        # 掲載日のマッピング（posted_date → published_date）
+        if not job.get('published_date'):
+            processed['published_date'] = job.get('posted_date', '')
+
         return processed
 
     def _get_value(self, job: Dict[str, Any], key: str) -> str:
