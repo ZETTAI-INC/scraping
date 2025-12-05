@@ -539,6 +539,10 @@ class EntenshokuScraper(BaseScraper):
         if not location or not area:
             return True  # 勤務地が取得できない場合は除外しない
 
+        # 「全国」を含む場合はどのエリアでも通過
+        if "全国" in location:
+            return True
+
         # 検索エリアの正式な都道府県名を取得
         target_prefecture = self.PREFECTURE_NAMES.get(area, area)
 
