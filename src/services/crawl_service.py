@@ -51,6 +51,8 @@ class CrawlService:
             "baitoru": BaitoruScraper,
             "hellowork": HelloworkScraper,
             "linebaito": LineBaitoScraper,
+            "machbaito": MachbaitoScraper,
+            "entenshoku": EntenshokuScraper,
         }
 
         # 進捗コールバック
