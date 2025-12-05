@@ -198,7 +198,7 @@ class CrawlWorker(QThread):
                             break
 
                         # 進捗を報告
-                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク", "linebaito": "LINEバイト", "machbaito": "マッハバイト", "entenshoku": "エン転職"}
+                        source_labels = {"townwork": "タウンワーク", "indeed": "Indeed", "baitoru": "バイトル", "hellowork": "ハローワーク", "linebaito": "LINEバイト", "machbaito": "マッハバイト", "entenshoku": "エン転職", "kaigojob": "カイゴジョブ"}
                         source_label = source_labels.get(source, source)
                         self._current_task = f"[{source_label}] {area} × {kw}"
                         self.progress.emit(f"{self._current_task} を検索中...", current_idx[0] + 1, total_combinations)
@@ -260,6 +260,14 @@ class CrawlWorker(QThread):
                         elif source == "entenshoku":
                             result = loop.run_until_complete(
                                 self.service.crawl_entenshoku(
+                                    keywords=[kw],
+                                    areas=[area],
+                                    max_pages=self.max_pages
+                                )
+                            )
+                        elif source == "kaigojob":
+                            result = loop.run_until_complete(
+                                self.service.crawl_kaigojob(
                                     keywords=[kw],
                                     areas=[area],
                                     max_pages=self.max_pages
@@ -420,6 +428,11 @@ class MainWindow(QMainWindow):
         self.entenshoku_check.setChecked(False)
         self.entenshoku_check.setToolTip("エン転職求人検索（employment.en-japan.com）")
         source_layout.addWidget(self.entenshoku_check, 3, 0)
+
+        self.kaigojob_check = QCheckBox("カイゴジョブ")
+        self.kaigojob_check.setChecked(False)
+        self.kaigojob_check.setToolTip("カイゴジョブ求人検索（kaigoagent.com）- 介護/事務/ドライバー")
+        source_layout.addWidget(self.kaigojob_check, 3, 1)
 
         layout.addWidget(source_group)
 
@@ -1350,6 +1363,8 @@ class MainWindow(QMainWindow):
             sources.append("machbaito")
         if self.entenshoku_check.isChecked():
             sources.append("entenshoku")
+        if self.kaigojob_check.isChecked():
+            sources.append("kaigojob")
         return sources
 
     def start_crawl(self):

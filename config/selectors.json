@@ -996,16 +996,17 @@
   },
   "kaigojob": {
     "name": "カイゴジョブ",
-    "base_url": "https://www.kaigojob.com",
-    "search_url_pattern": "https://www.kaigojob.com/search?keyword={keyword}&area={area}&page={page}",
+    "base_url": "https://www.kaigoagent.com",
+    "search_url_pattern": "https://www.kaigoagent.com/search/prefecture_{prefecture_id}/occupation_{occupation_id}?page={page}",
+    "note": "React SPA (Next.js) - 都道府県ID(12000026=東京等), 職種ID(10100013=事務, 10100008=ドライバー)",
     "selectors": {
-      "job_cards": ".job-list__item",
-      "title": ".job-list__title",
-      "company": ".job-list__company",
-      "location": ".job-list__location",
-      "salary": ".job-list__salary",
-      "employment_type": ".job-list__employment",
-      "detail_link": "a.job-list__link"
+      "job_cards": "a[href*='/job/']",
+      "title": "[class*='JobCard'] h3, [class*='title']",
+      "company": "[class*='company'], [class*='corporation']",
+      "location": "[class*='location'], [class*='address']",
+      "salary": "[class*='salary'], [class*='wage']",
+      "employment_type": "[class*='employment']",
+      "detail_link": "a[href*='/job/']"
     },
     "detail_selectors": {
       "job_number": ".job-id",
@@ -1013,6 +1014,32 @@
       "phone": ".contact-phone",
       "facility_type": ".facility-type",
       "business_content": ".business-content"
+    },
+    "job_categories": {
+      "事務": "10100013",
+      "介護事務": "10100013",
+      "医療事務": "10100013",
+      "ドライバー": "10100008",
+      "送迎運転手": "10100008",
+      "ケアドライバー": "10100008",
+      "運転手": "10100008",
+      "介護": null,
+      "介護職": null,
+      "ヘルパー": null,
+      "介護福祉士": null,
+      "ケアマネ": null,
+      "看護": null,
+      "看護師": null
+    },
+    "prefecture_ids": {
+      "北海道": 12000001, "青森": 12000002, "岩手": 12000003, "宮城": 12000004, "秋田": 12000005, "山形": 12000006, "福島": 12000007,
+      "茨城": 12000008, "栃木": 12000009, "群馬": 12000010, "埼玉": 12000011, "千葉": 12000012, "東京": 12000026, "神奈川": 12000014,
+      "新潟": 12000015, "富山": 12000016, "石川": 12000017, "福井": 12000018, "山梨": 12000019, "長野": 12000020,
+      "岐阜": 12000021, "静岡": 12000022, "愛知": 12000023, "三重": 12000024,
+      "滋賀": 12000025, "京都": 12000013, "大阪": 12000027, "兵庫": 12000028, "奈良": 12000029, "和歌山": 12000030,
+      "鳥取": 12000031, "島根": 12000032, "岡山": 12000033, "広島": 12000034, "山口": 12000035,
+      "徳島": 12000036, "香川": 12000037, "愛媛": 12000038, "高知": 12000039,
+      "福岡": 12000040, "佐賀": 12000041, "長崎": 12000042, "熊本": 12000043, "大分": 12000044, "宮崎": 12000045, "鹿児島": 12000046, "沖縄": 12000047
     },
     "pagination": {
       "type": "page_number",
