@@ -342,7 +342,8 @@ class TownworkScraper(BaseScraper):
         "ホール": ("oc-001", None),
         "キッチン": ("oc-001", None),
         # 営業・販売 (oc-002)
-        "営業": ("oc-002", None),
+        # 営業は複数のomcをクエリパラメータで指定
+        "営業": ("query", ["0011", "0012", "0013"]),
         "販売": ("oc-002", None),
         "接客": ("oc-002", None),
         "店長": ("oc-002", None),
@@ -429,20 +430,33 @@ class TownworkScraper(BaseScraper):
             oc_code, omc_code = category_info
             self._current_category_path = oc_code
 
-            if omc_code:
+            if oc_code == "query" and isinstance(omc_code, list):
+                # クエリパラメータ形式（複数omc指定）
+                omc_params = "&".join([f"omc={code}" for code in omc_code])
+                # emp=01&emp=04 (アルバイト・パート) + act=true (新着)
+                if page > 1:
+                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/?{omc_params}&emp=01&emp=04&act=true&page={page}"
+                else:
+                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/?{omc_params}&emp=01&emp=04&act=true"
+                logger.info(f"[タウンワーク] クエリパラメータ形式URL: {base_url}")
+            elif omc_code:
                 # 小カテゴリあり
                 category_path = f"{oc_code}/{omc_code}"
+                # ページパラメータ + 新着順ソート
+                if page > 1:
+                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/{category_path}/?page={page}&sc=new"
+                else:
+                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/{category_path}/?sc=new"
+                logger.info(f"[タウンワーク] カテゴリ検索URL: {base_url}")
             else:
                 # 大カテゴリのみ
                 category_path = oc_code
-
-            # ページパラメータ + 新着順ソート
-            if page > 1:
-                base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/{category_path}/?page={page}&sc=new"
-            else:
-                base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/{category_path}/?sc=new"
-
-            logger.info(f"[タウンワーク] カテゴリ検索URL: {base_url}")
+                # ページパラメータ + 新着順ソート
+                if page > 1:
+                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/{category_path}/?page={page}&sc=new"
+                else:
+                    base_url = f"https://townwork.net/prefectures/{pref_roman}/job_search/{category_path}/?sc=new"
+                logger.info(f"[タウンワーク] カテゴリ検索URL: {base_url}")
         else:
             # フリーキーワード検索にフォールバック
             self._current_category_path = None
